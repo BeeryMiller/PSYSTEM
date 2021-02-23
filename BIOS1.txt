@@ -1,0 +1,532 @@
+*BIOS1 2/02/89.1
+*MODIFIED:
+*       DSKRD
+*       PDSKRD
+*       PDSKWT
+*       DSKWRT
+
+*DISPATCH ROUTINES
+*DISK ACCESS PROCEDURES
+*UNITREAD/UNITWRITE
+*PERFORMS TRACK/SECTOR READ,
+*DOES NOT USE DOS FILE MANAGEMENT
+*
+*  VOLUME INFORMATION BLOCK
+*
+VIBUNT EQU  0         ; UNIT # WHERE VOLUME RESIDES
+VIBID  EQU  2         ; VOLUME IDENTIFIER
+*
+*  UNIT TABLE RECORD DESCRIPTION
+*
+UVID       EQU      0         ; VOLUME ID 8-BYTES
+UEOV       EQU     10         ; END OF VOLUME BLOCK NUMBER
+PHYVOL     EQU     12         ; UNIT # WHERE VOLUME RESIDES
+UBKOFF     EQU     14         ; WHERE SUBSIDIARY VOLUME STARTS
+*UFILLER2  EQU     16         ; FILLER - 8 BYTES
+USIZE      EQU     24         ; SIZE OF A RECORD - 24 BYTES
+
+
+BADDEV  EQU     2       ILLEGAL DEVICE #
+BADOP   EQU     3       ILLEGAL OPERATION ON DEVICE
+OFFLIN  EQU     9       DEV NOT ON LINE
+IOLIB   DATA    8       XOP LIBRARY FOR DISK I/O
+
+*CONTROL WORD DATA STORAGE
+CURDSK  BSS     2       CURRENT DISK BEING ACCESSED
+CTRLWD  BSS     2       CONTROL WORD STORAGE
+NOSPEC  BSS     2       SPECIAL CHAR MODE
+NOCRLF  BSS     2       <>0 THEN NO LINEFEEDS
+PHYSCT  BSS     2       PHYSICAL SECTOR FLAG
+
+*I/O ACCESS DATA
+BLCKNO  BSS     2
+BYTCNT  BSS     2
+UNITNO  BSS     2
+
+STDPAB  BSS     >10     GENERAL PURPOSE PAB USED BY P-SYSTEM ACCESS
+PATHNM BSS  80          SPACE TO WRITE PATHNAME
+
+**********************************************************
+* DEVICE ROUTINE DISPATCH FUNCTION
+* PERMITS STANDARDIZED LOOKUP FOR EACH DEVICE
+
+*    CORRECT DEVICE EXECUTION ADDRESS IS ESTABLISHED THRU TWO
+*    TABLE STAGES:
+*      INDEX DEVTBL TO CORRECT DEVICE FUNCTION TABLE
+*      INDEX DEVICE FUNCTION TABLE TO ROUTINE EXE ADDR
+
+*      A ZERO ENCOUNTERED AT EITHER OF THESE  TABLES WILL
+*      RESULT IN AN INVALID DEVICE ERROR
+
+*TABLE LENGTH VALUE TO KEEP TABLE TO A REASONABLE SIZE
+*THIS MAY NEED CHANGE IN FUTURE.
+
+DEVCNT DATA 16                TABLE LENGTH IN WORDS
+DEVTBL DATA SYSDEV,CONSOL,SYSTRM,SYSDEV,DSK,DSK
+       DATA PRNTER,REM,REM,DSK,DSK,DSK
+       DATA DSK,DSK,DSK,DSK
+
+* DISPATCH TO CORRECT ROUTINE
+*       ENTRY: R0=DEVICE #
+*              R1=FUNCTION OFFSET (0,2,4,6)
+
+DISPCH  CLR     @IORSLT ASSUME NO ERROR
+        C       R0,@DEVCNT  TOO HIGH?
+       JLT  DIS1
+        B       @INVDEV
+
+DIS1    MOV     R0,@UNITNO    SAVE IF NEEDED
+        SLA     R0,1    BYTE INDEX
+        AI      R0,DEVTBL
+        MOV     *R0,R0   R0^DEV FUNCTION TABLE
+       JNE  DIS1A
+        B       @INVDEV INVALID DEVICE
+DIS1A   A       R1,R0   FUNCTION INDEX
+        MOV     *R0,R0  R0 HAS EXECUTION ADDRESS
+        JNE     DIS2     OPERATION IS VALID
+        LI      R0,BADOP
+        B       @IORET
+DIS2    B       *R0
+
+*OFFSETS INTO DEVICE FUNCTION TABLE
+READ    EQU     0
+WRITE   EQU     2
+CNTROL  EQU     4
+STAT    EQU     6
+CLEAR   EQU     8
+
+*SYSTRM  DATA   0,0,0,0,0      NULL DEVICE FOR NOW
+SYSDEV DATA SYSHLT,SYSHLT,SYSCTR,SYSST,SYSCLR
+SYSTRM  DATA   SYSRD,CONWRT,CONCTR,CONST,CONCLR
+CONSOL  DATA   CONRD,CONWRT,CONCTR,CONST,CONCLR
+DSK     DATA   DSKRD,DSKWRT,DSKCTR,DSKST,DSKCLR
+REM     DATA   REMIN,REMOUT,REMCTR,REMST,REMCLR
+PRNTER  DATA   0,PRTOUT,PRTCTR,PRTST,PRTCLR
+
+INVDEV  LI      R0,BADDEV
+IORET   MOV     R0,@IORSLT
+        B       *BK
+***********************************************************
+* procedure calcdrvr ;
+*
+* entry: R0=indicated device #
+*        BLOCKNO=INDICATED BLOCK NUMBER
+
+* returns -
+*           r0=physical device #
+*           BLOCKNO=PHYSICAL BLOCK NUMBER
+*                   (IF UNIT# IS A STANDARD UNIT THIS IS THE SAME
+*                    AS INDICATED BLOCK # ABOVE--OTHERWISE BLOCK #
+*                    IS INDEXED BY THE BLOCK OFFSET OF THE VIRTUAL
+*                    DEVICE)
+
+CLCDVR    CI    R0,8                    ; if unit# <= 8 then
+          JGT   CLCD1                   ;  (*standard unit*)
+          B     *R11                    ;  exit
+*                                       ; endif
+CLCD1     CI    R0,128                  ; if unit# >= 128 then
+          JLT   CLCD2                   ;  (*user unit*)
+          B     *R11                    ;  exit
+*                                       ; endif
+*         At this point unit is A) physical disk B) subsid vol C) serial
+CLCD2     C     R0,@SUBST              ; if unit < SUBST (IN
+*                                            SYSCOM)
+          JEQ   CLCD3
+          JGT   CLCD3                      ;  (*disk unit*)
+          B     *R11                    ;  exit
+*                                       ; endif
+*         Check for Subsidiary Volume
+CLCD3     MOV   @SUBST,R5              ; r5 := start of subsid volumes
+          MOVB  @SUBMAX,R6               ; r6 := # of subsid volumes
+          SRL   R6,8
+          DEC   R6
+          A     R6,R5                   ; r5 := last subsid volume
+          C     R0,R5                   ; if unit <= last subsid then
+          JGT   CLCD7                   ;  (*subsidiary volume*)
+          LI    R5,USIZE                ;  r5 := size of unit record entry
+          MPY   R0,R5                   ;  r6 := index into unittable
+          A     @UNITPT,R6              ;  r6 := ptr to desired unit entry
+          MOV   @PHYVOL(R6),R0          ;  R0 := physical volume
+          C     R0,@SUBST               ;  if R0 >= SUBST then
+          JLT   CLCD4                   ;   (* error - bad unit *)
+          B     @INVDEV                 ;   error exit
+*                                       ;  endif
+CLCD4     C     @ZERO,@UBKOFF(R6)       ;  if blockoffset = 0 then
+          JNE   CLCD5                   ;   (* not on line *)
+          B     @INVDEV                 ;   error exit
+*                                       ;  endif
+CLCD5     C     @BLCKNO,@UEOV(R6)       ;  if block # > eov then
+          JLT   CLCD6                      ;   (* error - bad block *)
+          JEQ   CLCD6                      ;
+          B     @INVDEV                ;   error exit
+*                                       ;  endif
+CLCD6     A     @UBKOFF(R6),@BLCKNO   ;  calculate block number
+          RT                                 RETURN
+
+*                                       ; endif
+CLCD7     MOVB  @SERMAX,R6               ; r5 := # of serial units
+          SRL   R6,8
+          A     R6,R5                   ; r5 := last serial
+          C     R5,R0                   ; if last serial < unit # then
+          JEQ   CLCD8                      ;  (*error - illegal unit*)
+          JGT   CLCD8                      ;
+          B     @INVDEV                  ;  error exit
+*                                       ; endif
+CLCD8     B     *R11                    ; return
+
+**************************************************************
+
+*STANDARD PROCEDURE UNITBUSY
+UBUSY   CLR    @IORSLT  NEVER AN ERROR
+        INCT   SP
+        CLR    *SP      RETURN 'FALSE'
+        B      *BK
+
+*STANDARD PROCEDURE UNITWAIT
+UWAIT   CLR    @IORSLT  NO ERROR
+        INCT   SP
+        B      *BK
+
+*STANDARD PROCEDURE UNITCLEAR
+UCLEAR  MOV    *SP+,R0  DEVICE #
+        LI     R1,CLEAR
+        B      @DISPCH
+
+*STANDARD PROCEDURE UNITSTATUS
+STATRC  BSS     2       STATUS RECORD POINTER
+USTAT   MOV     *SP+,R0 CONTROL WORD
+        BL      @CTWORD
+        MOV     *SP+,@STATRC
+        MOV     *SP+,R0 DEVICE #
+        LI      R1,STAT
+        B       @DISPCH
+
+
+*SETS THE CONTROL WORD FUNCTION FLAGS FOR
+*USE BY ANY ROUTINE
+*ENTRY: R0=CONTROL WORD
+*NO OTHER REGISTERS AFFECTED
+
+CTWORD  MOV     R0,@CTRLWD
+        MOV     @CTRLWD,R0
+        ANDI    R0,4
+        MOV     R0,@NOSPEC  FLAG FOR SPECIAL CHAR
+        MOV     @CTRLWD,R0
+        ANDI    R0,8    SEE IF LINEFEED SUPPLIED
+        MOV     R0,@NOCRLF
+        MOV     @CTRLWD,R0
+        ANDI    R0,2
+        MOV     R0,@PHYSCT  PHYSICAL SECTOR MODE
+        RT
+
+**************************************************
+*UNITREAD/UNITWRITE STANDARD PROCEDURES
+* HANDLES ALL TYPES OF DEVICES
+* BOTH SYSTEM AND USER DEFINED
+
+UNITWT  LI      R1,WRITE
+        JMP     UNITIO
+
+UNITRD  LI      R1,READ
+
+*COMMON CODE FOR UNITREAD & UNITWRITE
+
+UNITIO  MOV     *SP+,R0 CONTROL WORD
+        BL      @CTWORD SET CONTROL FLAGS
+        MOV     *SP+,@BLCKNO LOGICAL BLOCK #
+        MOV     *SP+,@BYTCNT BYTE COUNTS
+        CLR     @DSKADR  STACK/HEAP AREA (HIWORD=0)
+        MOV     *SP+,@DSKADR+2  BYTE OFFSET
+        A       *SP+,@DSKADR+2  ADD WORD BASE
+        MOV     *SP+,R0 UNIT #
+        BL      @CLCDVR   GET PHYSICAL DEVICES
+        B       @DISPCH
+
+**************************************
+*  DEVICE ACCESS PRIMITIVES          *
+*  (BASED ON SBIOS)
+**************************************
+
+SYSHLT BLWP @0           DUMMY ENTRY (SHUTDOWN)
+
+SYSST  MOV  @STATRC,R1
+       LI   R0,MEMTOP
+       MOV  R0,*R1+
+       CLR  *R1+
+       CLR  *R1+
+
+SYSCTR
+SYSCLR CLR  @IORSLT
+       B    *BK
+
+**********FLOPPY DISKS**************
+*ALL TRANSFERS ARE THROUGH STRBF'S IN PME BECAUSE AN
+*ENTIRE SECTOR IS NOT ALWAYS REQUESTED
+*CAN READ DATA TO ANYWHERE IN P-SYSTEM MAP
+*(FOR USE BY READSEG)
+*CONTROL WORD FLAGS AND DSKADR MUST BE PREPARED BEFORE RSP CALL
+
+DSKADR  BSS     4       32 BIT ADDRESS FOR DISK SOURCE/DEST
+*                       WORD1=HIWORD (NORMALLY 0000 EXCEPT FOR
+*                          CALLS BY READSEG)
+*                       WORD2=LOWORD
+
+DSKCLR CLR  @PHYSCT
+DSKCTR  CLR     @IORSLT
+        B       *BK
+
+DSKRD   MOV     @PHYSCT,@PHYSCT
+        JEQ     DSKR3   NOT PHYSICAL SECTOR
+        B       @PDSKRD JUMP TO PHYSICAL MODE
+*
+DSKR3  MOV  @UNITNO,R0        DEVICE # (MUST BE VALID DISK DRIVE)
+       MOV  @BLCKNO,R1
+       SLA  R1,1              TRANSLATE LOGICAL BLOCK TO PHYSICAL SECTOR
+*
+       MOV  @BYTCNT,R2
+       SRL  R2,8              sector count...
+*
+       MOV  @DSKADR,R4        high word
+       MOV  @DSKADR+2,R5      low word
+*
+       BL   @DSKRDX           read into memory
+*
+       MOV  @IORSLT,R0
+       JNE  DSKR4             error...
+*
+       MOVB @BYTCNT+1,R0
+       JEQ  DSKR4             all done.
+*
+       MOV  @BLCKNO,R1
+       SLA  R1,1
+       MOVB @BYTCNT,R2
+       SRL  R2,8
+       A    R2,R1             new block number
+*
+       LI   R2,1              one sector
+*
+       CLR  R4                high word
+       LI   R5,STRBF1         low word
+*
+       BL   @DSKRDX
+*
+       MOV  @IORSLT,R0
+       JNE  DSKR4
+*
+       MOVB @BYTCNT+1,R1      count
+       SRL  R1,8
+*
+       MOV  @DSKADR,R4
+       MOV  @DSKADR+2,R5
+       AB   @BYTCNT,R5
+       JNC  DSKR3A
+       INC  R4
+*
+DSKR3A CLR  R6
+       LI   R7,STRBF1
+*
+       BLWP @LNGMOV
+*
+DSKR4   B       *BK     DONE
+
+*PHYSICAL SECTOR DISK READ
+*MODIFIED FOR FULL ADDRESSING 1/30/88
+PDSKRD  MOV     @BLCKNO,R1
+
+        LI      R2,1    READ 1 PHYSICAL SECTOR
+        MOV     @DSKADR+2,R5  LOWEST 16 BITS OF TRUE ADDRESS
+        MOV     @DSKADR,R4    HI WORD
+        BL      @DSKRDX       READ THE BLOCK INTO BUFFER
+        B       *BK     DONE
+
+
+*MODIFIED FOR NEW ADDRESSING  1/30/88
+DSKWRT  MOV     @PHYSCT,@PHYSCT
+        JEQ     DSKWT3  NOT PHYSICAL SECTOR
+        B       @PDSKWT JUMP TO PHYSICAL MODE
+*
+DSKWT3 MOV  @UNITNO,R0        DEVICE # (MUST BE VALID DISK DRIVE)
+       MOV  @BLCKNO,R1
+       SLA  R1,1              TRANSLATE LOGICAL BLOCK TO PHYSICAL SECTOR
+*
+       MOV  @BYTCNT,R2
+       AI   R2,>00FF          round it up
+       SRL  R2,8              sector count...
+*
+       MOV  @DSKADR,R4        high word
+       MOV  @DSKADR+2,R5      low word
+*
+       BL   @DSKWRX           write from memory
+*
+DSKWT4 B    *BK               done
+
+*PHYSICAL SECTOR DISK WRITE
+*MODIFIED FOR LONG ADDRESS 1/30/88
+
+PDSKWT  MOV     @BLCKNO,R1
+        LI      R2,1    READ 1 PHYSICAL SECTOR
+        MOV     @DSKADR+2,R5  LOWEST 16 BITS OF TRUE ADDRESS
+        MOV     @DSKADR,R4    HI WORD
+        BL      @DSKWRX       READ THE BLOCK INTO BUFFER
+        B       *BK     DONE
+
+
+
+*CONVERT UNIT # TO DISK NAME AND INSERT INTO PAB
+*ENTRY: UNIT # IN UNITNO
+
+*EXIT:  DSK NAME LOADED INTO STDPAB
+*   R0,R6,R7 ALTERED
+
+*INDEXES INTO DSKTBL FOR DSK1 THRU 5
+DSKNO  DATA DSK1,DSK2,DSK3,DSK3              unit 4,5,6,7
+       DATA DSK3,DSK3,DSK4,DSK5              unit 8,9,10,11
+       DATA 0,0,0,0                          unit 12,13,14,15
+*
+DSK1   BYTE 5
+       TEXT 'DSK1.'
+DSK2   BYTE 5
+       TEXT 'DSK2.'
+DSK3   BYTE 5
+       TEXT 'DSK3.'
+DSK4   BYTE 5
+       TEXT 'DSK4.'
+DSK5   BYTE 5
+       TEXT 'DSK5.'
+
+SETDSK  MOV     @UNITNO,R0
+        SLA     R0,1    BYTE OFFSET
+        AI      R0,DSKNO-8    NORMALIZE REL. TO UNIT 4
+        MOV     *R0,R0  CONTAINS DSKTBL OFFSET
+       JEQ  SETD2
+*
+       MOVB *R0,R6
+       SRL  R6,8
+       INC  R6
+       LI   R7,STDPAB+14
+       MOVB @H00,*R7+
+*
+SETD1  MOVB *R0+,*R7+
+       DEC  R6
+       JNE  SETD1
+*
+       RT
+*
+SETD2  CLR  @STDPAB+14        no name to return
+       RT
+
+*LOW LEVEL DISKREAD
+* LOWEST LEVEL LINK TO OPERATING SYSTEM
+* CAN BE USED BY PHYSICAL OR LOGICAL SECTOR CALLS
+
+*ENTRY: UNITNO=UNIT NUMBER (SHOULD BE VALID FOR DISK)
+*       R1=SECTOR # (ACTUAL 256 BYTE SECTOR)
+*          DISK RELATIVE
+*       R2=# SECTORS TO READ
+*       R4,5=24 BIT DEST ADDRESS (MYARC FORMAT)
+*            (8 HI BITS IN LOW WORD OF R4)
+*EXIT:  DATA READ
+*       IORSLT  LOADED
+
+        BSS     2
+DSKRDX  MOV     R11,@DSKRDX-2  SAVE RETURN ADDR
+*
+        BL      @SETDSK SET PATH NAME
+*
+        MOV     R4,@STDPAB+2  CLEAR ERROR AND LOAD HI-BITS
+        MOV     R5,@STDPAB+4  REST OF BUFFER ADDRESS
+        MOV     R2,@STDPAB+12 SECTOR COUNT
+        MOV     R1,@STDPAB+6  SECTOR#
+*
+        LI      R0,>0A00   BINARY READ
+        MOV     R0,@STDPAB
+*
+        LI      R0,STDPAB  ASSUME PAB ON SAME PAGE AS CODE
+        CLR     @STDPAB+10  TO CPU MEMORY
+        XOP     @IOLIB,0 READ THE STUFF
+        BL      @GETERR TRANSLATE ERROR CODES
+*
+        MOV     @DSKRDX-2,R11
+        RT
+
+* LOWEST LEVEL LINK TO OPERATING SYSTEM
+* CAN BE USED BY PHYSICAL OR LOGICAL SECTOR CALLS
+
+*ENTRY: UNITNO=UNIT NUMBER (SHOULD BE VALID FOR DISK)
+*       R1=SECTOR # (ACTUAL 256 BYTE SECTOR)
+*       R2=# SECTORS TO WRITE
+*       R4,5=24 BIT BUFFER ADDRESS
+*            (8 HI BITS IN R4)
+*EXIT:  DATA WRITTEN
+*      IORSLT LOADED
+
+DSKWRX  MOV     R11,@DSKRDX-2  SAVE RETURN ADDR
+*
+        BL      @SETDSK SET PATH NAME
+*
+        LI      R0,>0B00   BINARY WRITE
+        MOV     R0,@STDPAB
+*
+        MOV     R4,@STDPAB+2  CLEAR ERROR AND LOAD HIBITS
+        MOV     R5,@STDPAB+4  REST OF BUFFER ADDRESS
+        MOV     R1,@STDPAB+6  SECTOR#
+        CLR     @STDPAB+10    CPU BUFFER
+        MOV     R2,@STDPAB+12  SECTOR
+*
+        LI      R0,STDPAB  ASSUME PAB ON SAME PAGE AS CODE
+        XOP     @IOLIB,0 READ THE STUFF
+        BL      @GETERR TRANSLATE ERROR CODES
+*
+        MOV     @DSKRDX-2,R11  RETURN ADDRESS
+        RT
+
+*GETERR TRANSLATES DOS ERROR INTO P-SYSTEM ERROR CODES
+*MUST BE CALLED IMMEDIATELY AFTER LAST ACCESS
+*CAN BE CALLED BY ANY ROUTINE USING A PAB
+
+*ENTRY: R0=^PAB
+*EXIT:  IORSLT LOADED
+
+DSKERR  DATA    2,16,3,3,15,17,2,4
+
+*TEMPORARY TILL WE GET THIS STRAIGHT
+
+GETERR MOV  R0,R1
+       MOVB @2(R1),R1
+       JNE  GETR2
+*
+        CLR     @IORSLT
+        RT
+
+GETR2   AI      R0,2   ^SYSTEM ERROR CODE
+        MOVB    *R0,R0
+       SRL  R0,12             3 HI BITS ARE INDEX
+        ANDI    R0,>E   ELIM ODD BIT
+       AI   R0,DSKERR
+        MOV     *R0,@IORSLT
+       RT
+
+
+*DISK STATUS ROUTINE
+*RETURNS MYARC STATUS BYTE @STATUS RECORD+29
+*SETS IORSLT
+*NO OTHER INFO IS RETURNED AT THIS TIME HOWEVER ANY OF THE
+*BYTES 0-28 ARE AVAILABLE FOR FUTURE EXTENSIONS
+*EXPECTS DISK # IN UNITNO
+*STATUS RECORD POINTER AT USTAT
+
+DSKST   BL      @SETDSK GET DISK NAME
+*
+        LI      R0,>0900 STATUS OPCODE
+        MOVB    R0,@STDPAB
+*
+        LI      R0,STDPAB
+        XOP     @IOLIB,0
+*
+        BL      @GETERR  ASSUMES R0 STILL INTACT AFTER XOP
+       MOV  @STATRC,R0        was retst
+        AI      R0,29
+        MOVB    @STDPAB+14,*R0   WRITE TO LAST BYTE OF RECORD
+        B       *BK
+
+

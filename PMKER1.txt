@@ -1,0 +1,471 @@
+*PMKER1 7/23/88.1
+
+*CONTAINS KLUDGES TO AVOID SYSMAP+1 CONSTRUCT WHICH WILL NOT
+* ASSEMBLE BECAUSE SYSMAP IS A REFERENCED VALUE
+* SEE ITEMS MARKED SYSMAP+1
+
+* * *  * * * *
+*UPDTATED TO CONTIGUOUS MEMORY
+
+*PME INTERPRETER
+*COMMON SUBROUTINES
+*MODIFIED FOR MYARC BY JAY HOLOVACS
+
+*****************COMMON SUBROUTINES
+
+************************************************
+*   ENTRY:  R1=LO WORD ADDRESS IN CURRENT POOL     *
+*   USES:   CURPOL
+
+*   EXIT: R1=ADDRESS AUTO INCREMENTED            *
+*         R2=VALUE OF WORD IN SEGMENT            *
+*         R6,R7 ALTERED
+*                                                *
+*NOTE: SEGWRD READS WORD LITERALLY               *
+*      SEGCHW CHECKS SEX AND SWAPS IF APPROPRIATE
+
+*    <<ASSUMES REFERENCE IS TO CURRENT SEGMENT
+*      THIS MAY NOT BE VALID!>>
+
+*      EXPECTS WORD BOUNDARY                          *
+*      EXPECTS TRUE ADDRESS IN R1
+
+**************************************************
+
+
+* VERSION 1/24/88
+*ENTRY: R1=BYTE OFFSET IN SEGMENT
+
+*EXIT:  R1=OFFSET INCREMENTED
+*       R2=VALUE OF WORD
+*       R1,R6,R7,R15 ALTERED
+
+        BSS     4
+SEGWRD  MOV     R11,@SEGWRD-2
+        MOV     R1,@SEGWRD-4
+        MOV     @EREC,R5
+        MOV     R1,R6   OFFSET IN SEG
+        BL      @GETSEG
+        BL      @GETWD
+        MOV     R15,R2
+        MOV     @SEGWRD-2,R11
+        MOV     @SEGWRD-4,R1
+        INCT    R1
+        RT
+
+
+SEGCHW  MOV     R11,@SEGWRD-2
+        MOV     R1,@SEGWRD-4
+        MOV     @EREC,R5
+        MOV     R1,R6   OFFSET IN SEG
+        BL      @GETSEG
+        BL      @GETWD
+        MOV     R15,R2
+        MOV     @SEGWRD-2,R11
+        MOV     @SEGWRD-4,R1
+        INCT    R1
+        MOV     @SEXOK,@SEXOK
+        JNE     SG2
+        SWPB    R2
+SG2     RT
+
+
+**********************************************
+* READS THE BYTE IN CURRENT SEGMENT POINTED  *
+* BY THE IPC;                                *
+* ENTRY: SYSTEM REGISTERS ASSUMED PREPARED   *
+* USES: CURSEG,CURPOL,IPC
+*
+* EXIT: IPC UPDATED                          *
+*       BYTE IN LOBYTE OF R15 (WORD FORMAT)  *
+*       R4,R6,R7   ALTERED                           *
+*       R14=TRUE ADDRESS OF NEXT BYTE IN CODE SEGMENT
+
+*MODIFIED 1/23/88 FOR LINEAR ADDRESSING
+* *
+
+NXTBYT  MOV     CURSEG,R14  LO WORD ADDRESS OF CURRENT SEG
+        A       IPC,R14     ADD SEG RELATIVE OFFSET
+        MOV     R14,R6      USED TO CALCULATE MAP BYTE
+        ANDI    R14,MASK8K   OFFSET WITHIN 8K BLOCK
+        AI      R14,OFST8K   WE WILL PUT IN 2ND BANK
+*
+        SRL     R6,13   3 HI BITS=BLOCK OFFSET PTR (0 BASED)
+        MOV     @CURPOL,R7
+        SLA     R7,3
+        A       R7,R6   R6=BYTE OFFSET INTO MAP
+       MOVB @BLK8K,R7
+       MOVB @SYSMAP(R6),@BLK8K
+*
+       MOVB *R14,R15          GET IT
+       SRL  R15,8
+       INC  IPC
+*
+       MOVB R7,@BLK8K
+       RT
+
+* * * * * * * * * * * * * *
+*1/25/88
+*ENTRY: R6=HIWORD OF ADDRESS
+*       R7=LOWORD OF ADDRESS
+
+*EXIT:  R15=WORD FROM THAT ADDRESS
+*       R1 ALTERED
+*       R6,R7 UNCHANGED
+
+        BSS     4
+GETWD   MOV     R7,R1   EXTRA COPY
+        MOV     R7,@GETWD-2
+        MOV     R6,@GETWD-4
+        ANDI    R7,MASK8K   OFFSET WITHIN 8K BLOCK
+        AI      R7,OFST8K   WE WILL PUT IN 2ND BANK
+        SRL     R1,13   3 HI BITS=BLOCK OFFSET PTR (0 BASED)
+        SLA     R6,3
+        A       R6,R1   BYTE OFFSET INTO MEMORY MAP
+        MOVB    @SYSMAP(R1),@BLK8K  SET MEMORY MAP
+        MOV     *R7,R15   GET IT
+
+*          {SYSMAP+1}
+        LI      R1,SYSMAP
+        INCT    R1   SWAP IN BLOCK AT >4000
+        MOVB    *R1,@BLK8K   BACK TO STACK/HEAP AREA
+        MOV     @GETWD-4,R6
+        MOV     @GETWD-2,R7
+        RT
+
+*NOT TO BE CONFUSED WITH GETBYT ROUTINE USED BY INSTRUCTION FETCH
+*RETURNS A SINGLE BYTE FROM LONG ADDRESS; SIMILAR TO GETWD
+*BYTE IS IN HIBYTE OF R15
+
+GETBTE  MOV     R7,R1   EXTRA COPY
+        MOV     R7,@GETWD-2
+        MOV     R6,@GETWD-4
+        ANDI    R7,MASK8K   OFFSET WITHIN 8K BLOCK
+        AI      R7,OFST8K   WE WILL PUT IN 2ND BANK
+        SRL     R1,13   3 HI BITS=BLOCK OFFSET PTR (0 BASED)
+        SLA     R6,3
+        A       R6,R1   BYTE OFFSET INTO MEMORY MAP
+        MOVB    @SYSMAP(R1),@BLK8K  SET MEMORY MAP
+        CLR     R15
+        MOVB    *R7,R15   GET IT
+
+*          {SYSMAP+1}
+        LI      R1,SYSMAP
+        INCT    R1   SWAP IN BLOCK AT >4000
+        MOVB    *R1,@BLK8K   BACK TO STACK/HEAP AREA
+        MOV     @GETWD-4,R6
+        MOV     @GETWD-2,R7
+        RT
+
+
+*1/27/88
+*ENTRY: R6=HIWORD OF ADDRESS
+*       R7=LOWORD OF ADDRESS
+*       R15=VALUE TO PUT
+
+*EXIT:  R1 ALTERED
+*       R6,R7 UNCHANGED
+
+PUTWD   MOV     R7,R1   EXTRA COPY
+        MOV     R7,@GETWD-2
+        MOV     R6,@GETWD-4
+        ANDI    R7,MASK8K   OFFSET WITHIN 8K BLOCK
+        AI      R7,OFST8K   WE WILL PUT IN 2ND BANK
+        SRL     R1,13   3 HI BITS=BLOCK OFFSET PTR (0 BASED)
+        SLA     R6,3
+        A       R6,R1   BYTE OFFSET INTO MEMORY MAP
+        MOVB    @SYSMAP(R1),@BLK8K  SET MEMORY MAP
+        MOV     R15,*R7   PUT IT
+*
+*             {SYSMAP+1}
+        LI      R1,SYSMAP
+        INCT    R1          RESTORE >4000 BLOCK
+        MOVB    *R1,@BLK8K   BACK TO STACK/HEAP AREA
+        MOV     @GETWD-4,R6
+        MOV     @GETWD-2,R7
+        RT
+
+*STORES A SINGLE BYTE AT (LONG ADDRESS)
+*1/31/88
+*ENTRY: R6=HIWORD OF ADDRESS
+*       R7=LOWORD OF ADDRESS
+*       R15(MSB)=VALUE TO PUT
+
+*EXIT:  R1 ALTERED
+*       R6,R7 UNCHANGED
+
+PUTBYT  MOV     R7,R1   EXTRA COPY
+        MOV     R7,@GETWD-2
+        MOV     R6,@GETWD-4
+        ANDI    R7,MASK8K   OFFSET WITHIN 8K BLOCK
+        AI      R7,OFST8K   WE WILL PUT IN 2ND BANK
+        SRL     R1,13   3 HI BITS=BLOCK OFFSET PTR (0 BASED)
+        SLA     R6,3
+        A       R6,R1   BYTE OFFSET INTO MEMORY MAP
+        MOVB    @SYSMAP(R1),@BLK8K  SET MEMORY MAP
+        MOVB    R15,*R7   PUT IT
+
+*             {SYSMAP+1}
+        LI      R1,SYSMAP
+        INCT    R1           RESTORE >4000 BLOCK
+        MOVB    *R1,@BLK8K   BACK TO STACK/HEAP AREA
+        MOV     @GETWD-4,R6
+        MOV     @GETWD-2,R7
+        RT
+
+*LNGMOV MOVE BYTES FROM ONE LONG ADDRESS TO ANOTHER
+*ENTRY: R1=BYTE COUNT
+*       R4=DEST HI WORD
+*       R5=DEST LO WORD
+*       R6=SOURCE HI WORD
+*       R7=SOURCE LO WORD
+
+*EXIT:  BYTES MOVED
+*       COUNTS UNDESTURBED
+*       CALLING REGISTERS UNDESTURBED
+
+LNGMOV  DATA    WKSP2,LNGM1
+LNGM1   MOV     @2(R13),R12   BYTE COUNT
+
+        MOV     @12(R13),R9   HI WORD SOURCE
+        MOV     @14(R13),R10  LO WORD SOURCE
+        MOV     @8(R13),R7   HI WORD DEST
+        MOV     @10(R13),R8  LO WORD
+*DETERMINE DIRECTION OF MOVE
+        CLR     R5      DIRECTION FLAG; 0 IF FORWARD
+        C       R9,R7   SOURCE>DEST?
+        JH      LNGM5   YES, FORWARD MOVE
+        JNE     LNGM6   LESS THAN, REVERSE MOVE
+        C       R10,R8  TAKE A SECOND VOTE
+        JH      LNGM5
+
+*PREPARE FOR REVERSE MOVE
+LNGM6   SETO    R5      SET FLAG
+*SET POINTERS TO END OF BLOCKS
+        DEC     R12     INDEX TO LAST BYTE
+        A       R12,R8
+        JNC     LNGM7
+        INC     R7
+LNGM7   A       R12,R10
+        JNC     LNGM12
+        INC     R9
+LNGM12  INC     R12     PUT IT BACK
+
+*  SET UP SOURCE
+LNGM5   MOV     R10,R2        EXTRA COPY
+        ANDI    R10,MASK8K    INDEX VALUE
+        SRL     R2,13    SAVE 3 HI BITS
+        SLA     R9,3
+        A       R2,R9   R9=MAP INDEX FOR SOURCE
+
+*  SET UP DEST
+        MOV     R8,R2        EXTRA COPY
+        ANDI    R8,MASK8K    INDEX VALUE
+        SRL     R2,13    SAVE 3 HI BITS
+        SLA     R7,3
+        A       R2,R7   R7=MAP INDEX FOR DEST
+
+* LOAD MAP
+        MOVB    @SYSMAP(R7),@>F113  DEST IN >6000 BLOCK
+        MOVB    @SYSMAP(R9),@>F112  SOURCE IN >4000 BLOCK
+
+* CHECK FOR FORWARD OR REVERSE MOVE
+        MOV     R5,R5
+        JNE     LNGM8   USE REVERSE MOVE
+
+LNGM4   MOVB    @>4000(R10),@>6000(R8)  COPY A BYTE
+        INC     R8
+        CI      R8,>2000  CHECK DEST FOR OVERRUN
+        JNE     LNGM2   NO CARRY
+        INC     R7
+        CLR     R8    BACK TO BEGINNING OF BLOCK
+        MOVB    @SYSMAP(R7),@>F113
+
+LNGM2   INC     R10
+        CI      R10,>2000  CHECK SOURCE FOR OVERRUN
+        JNE     LNGM3   NO CARRY
+        INC     R9
+        CLR     R10   BEGINNING OF BLOCK
+        MOVB    @SYSMAP(R9),@>F112
+
+LNGM3   DEC     R12  BYTE COUNTER
+        JNE     LNGM4   MORE TO GO
+        JMP     LNGM11  CLEAN UP & GO HOME
+
+*REVERSE MOVE:
+LNGM8   MOVB    @>4000(R10),@>6000(R8)  COPY A BYTE
+        DEC     R10   SEE IF SOURCE DROPS OUT OF BLOCK
+        JOC     LNGM9   CARRY FLAG IS SET EXCEPT WHEN 0000-->FFFF
+        DEC     R9
+        LI      R10,MASK8K  BACK TO TOP OF BLOCK
+        MOVB    @SYSMAP(R9),@>F112
+
+LNGM9   DEC     R8    SEE IF DEST DROPS OUT OF BLOCK
+        JOC     LNGM10  NO BORROW
+        DEC     R7
+        LI      R8,MASK8K   TOP OF BLOCK
+        MOVB    @SYSMAP(R7),@>F113
+
+LNGM10  DEC     R12  BYTE COUNTER
+        JNE     LNGM8   MORE TO GO
+
+*RESTORE MEMORY MAP
+LNGM11  LI      R2,2    NECESSARY BECAUSE ASSEMBLER CAN'T EVALUATE
+*                       EXPRESSION INVOLVING REF VALUE
+        MOVB    @SYSMAP(R2),@>F112
+        INC     R2
+        MOVB    @SYSMAP(R2),@>F113
+        RTWP
+*
+******************************
+*MODIFIED 1/27/88 FOR LINEAR ADDRESS
+
+* COPIES A STRING FROM CURRENT SEGMENT INTO BUFFER IN CPU
+* RAM FOR FURTHER ACCESS
+
+* EXPECTS LENGTH AS FIRST BYTE
+* ENTRY: R7=LO WORD OF CPU BUFFER ADDR (NORMALLY STRBF1 OR 2)
+*        R15=SEGMENT OFFSET (BYTES)
+* EXIT:  STRING COPIED
+*        R0-R6 ALTERED
+
+        BSS     2
+GETSTR  MOV     R11,@GETSTR-2
+        MOV     R7,R5   LOWORD OF DEST
+        MOV     @CURPOL,R6  HIWORD OF SOURC
+        MOV     CURSEG,R7
+        MOV     R15,R1  SEG OFFSET
+        BL      @LNGADD
+        CLR     R4      HIWORD OF DEST (ALWAYS 0)
+        LI      R1,1    GET BYTE COUNT
+        BLWP    @LNGMOV
+
+        CLR     R1
+        MOVB    *R4+,R1 INCREMENT DEST &
+        SWPB    R5      GET STRING LENGTH COUNT
+        INC     R2
+        BLWP    @LNGMOV
+        MOV     @GETSTR-2,R11
+        RT
+
+
+*******FETCH BYTES
+* COPIES BYTES FROM SEGMENT INTO BUFFER IN CPU
+* RAM FOR FURTHER ACCESS
+* MODIFIED FOR LINEAR ADDRESS 1/24/88
+
+
+* ENTRY: R5=NUMBER OF BYTES TO TRANSFER
+*        R6=EREC OF SOURCE SEGMENT
+*        R7=ADDR OF CPU BUFFER (NORMALLY STRBF1 OR 2)
+*        R15=OFFSET INTO SEGMENT (BYTES)
+
+*NOTE: CALLER MUST HANDLE CHECK FOR SEGMENT PRESENCE!!
+
+* EXIT:  BYTES COPIED
+*        R0-R5 ALTERED
+*        R15=UPDATED OFFSET
+
+        BSS     6       TEMP STORAGE
+
+FTCHBY  MOV     R5,@FTCHBY-2  SAVE COUNT
+        MOV     R7,@FTCHBY-4  DEST
+        MOV     R11,@FTCHBY-6
+        MOV     R6,R5   EREC
+        MOV     R15,R6  OFFSET
+        BL      @GETSEG SOURCE IN R6/7
+        CLR     R4      HI WORD OF DEST
+        MOV     @FTCHBY-4,R5  LO WORD OF DEST
+        MOV     @FTCHBY-2,R1  COUNT
+        BLWP    @LNGMOV
+        MOV     @FTCHBY-6,R11
+        RT
+
+****************************************************
+* THE FOLLOWING IS ENTRY CODE TO ANY P-CODE USING
+* ARGUMENTS FROM THE SEGMENT.  ENTRY POINT IS
+* ACCORDING TO # OF ARGUMENTS REQUIRED.
+* EQ SET IF R3=0
+****************************************************
+
+GET3    BL      @NXTBYT
+        MOV     R15,R5
+GET2    BL      @NXTBYT
+        MOV     R15,R4
+GETBYT  BL      @NXTBYT
+        MOV     R15,R3
+        B       *R2     ON TO REST OF OP-CODE
+
+
+********************************************
+*FETCHES A 'BIG' PARAMETER (RETURNED IN R3)
+
+*ENTRY AT GETBG2 FETCHES 2 BYTES INTO R5, R4
+* THEN BIG PARAMETER INTO R3
+GETBG2  BL      @NXTBYT
+        MOV     R15,R5
+
+*ENTRY AT GETBG1 FETCHES FIRST BYTE INTO R4
+* THEN BIG PARAMETER INTO R3
+GETBG1  BL      @NXTBYT
+        MOV     R15,R4
+
+GETBIG  BL      @NXTBYT
+        MOV     R15,R3
+        ANDI    R15,>0080  SEE IF BIT 7 SET
+        JNE     GB1     LONG FORM
+        B       *R2     END OF SHORT FORM
+
+GB1     ANDI    R3,>007F  CLEAR BIT 7
+        BL      @NXTBYT
+        SWPB    R15     THIS IS LOW VALUE
+        MOVB    R15,R3  INTO R3
+        SWPB    R3      STRAIGHTEN IT OUT
+        B       *R2
+
+********************************************************
+* THIS IS CENTRAL COMPONENT OF PME ERROR HANDLING ROUTINE
+* SEGMENT & STACK FAULTS HANDLED SPECIALLY
+
+
+* ENTRY POINT FOR BIOS USER BREAK
+TRAP    LI      BK,BACK RESTORE BACK POINTER
+        MOV     @XEQERR,R1      ERROR #
+        JMP     TRAP1
+* STANDARD (NON BIOS) ENTRY POINT
+TRAPER  MOV     *R11,R1
+TRAP1   CI      R1,SEGFLT       SEGMENT FAULT?
+        JNE     TRAP2
+        MOV     R5,@FTEREC
+        CLR     @FTNWDS
+        JMP     TRAP3
+TRAP2   CI      R1,STKFLT       STACK FAULT?
+        JNE     TRAP4
+        MOV     @SVEREC,@FTEREC PREPARE FAULT EREC
+        MOV     @STKEXT,R2      SET FAULT NWDS
+        SRL     R2,1    WORD SIZE
+        MOV     R2,@FTNWDS
+TRAP3   MOV     @CURTSK,@FLTTIB PREPARE FOR CONTEXT SHIFT
+        MOV     R1,@FLTNUM
+        LI      R1,FLTSEM
+        DECT    SP
+        MOV     R1,*SP  PUSH FAULT SEMAPHOR
+        LI      R1,SIGNAL+2 AND SIGNAL
+        B       *R1
+
+*OTHER THEN SEG&STACK PROBLEMS:
+TRAP4   DECT    SP
+        CLR     *SP     PARM1=0
+        DECT    SP
+        CLR     *SP     PARM2=0
+        INC     @SKPCHK FLAG FOR NO STACK CHECK
+        DECT    SP
+        MOV     R1,*SP  PUSH ERROR #
+*
+        MOV     @BASE,@STATLK SET STATIC LINK
+       LI   R5,1              local segment #1 (kernel)
+        LI      R3,2    PROCEDURE 2
+        LI      R11,CXG3 TO MIDDLE OF CXG
+       B    @SEGCHK           SEGCHECK CANNOT FAULT
+
+*********************************************************

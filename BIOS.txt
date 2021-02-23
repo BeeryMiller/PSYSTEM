@@ -1,0 +1,968 @@
+*BIOS1 2/02/89.1
+*MODIFIED:
+*       DSKRD
+*       PDSKRD
+*       PDSKWT
+*       DSKWRT
+
+*DISPATCH ROUTINES
+*DISK ACCESS PROCEDURES
+*UNITREAD/UNITWRITE
+*PERFORMS TRACK/SECTOR READ,
+*DOES NOT USE DOS FILE MANAGEMENT
+
+*FIX THIS FOR 9640 MODE!!!
+STATUS  EQU     >837C   99/4A MODE
+
+*  VOLUME INFORMATION BLOCK
+*
+VIBUNT   EQU      0         ; UNIT # WHERE VOLUME RESIDES
+VIBID     EQU      2         ; VOLUME IDENTIFIER
+*
+*  UNIT TABLE RECORD DESCRIPTION
+*
+UVID       EQU      0         ; VOLUME ID 8-BYTES
+*UFILLER1  EQU      8         ; FILLER
+UEOV       EQU     10         ; END OF VOLUME BLOCK NUMBER
+PHYVOL     EQU     12         ; UNIT # WHERE VOLUME RESIDES
+UBKOFF     EQU     14         ; WHERE SUBSIDIARY VOLUME STARTS
+*UFILLER2  EQU     16         ; FILLER - 8 BYTES
+USIZE      EQU     24         ; SIZE OF A RECORD - 24 BYTES
+
+
+BADDEV  EQU     2       ILLEGAL DEVICE #
+BADOP   EQU     3       ILLEGAL OPERATION ON DEVICE
+OFFLIN  EQU     9       DEV NOT ON LINE
+GBLVEC  BSS     2       STORAGE FOR GLOBAL EVEC (USED BY FAULT HANDLER)
+
+*CONTROL WORD DATA STORAGE
+CURDSK  BSS     2       CURRENT DISK BEING ACCESSED
+CTRLWD  BSS     2       CONTROL WORD STORAGE
+NOSPEC  BSS     2       SPECIAL CHAR MODE
+NOCRLF  BSS     2       <>0 THEN NO LINEFEEDS
+PHYSCT  BSS     2       PHYSICAL SECTOR FLAG
+IOLIB   EQU     $       XOP LIBRARY FOR DISK I/O
+NCRLFM  DATA    >0008    MASK FOR NO CR AFTER LF HANDLING
+NSPECM  DATA    >0004    MASK FOR NO SPECIAL HANDLING
+NPSCTM  DATA    >0002    MASK FOR PHYSICAL VERSUS LOGICAL SECTOR I/O
+
+
+*I/O ACCESS DATA
+BLCKNO  BSS     2
+BYTCNT  BSS     2
+UNITNO  BSS     2
+
+RETST   BSS     30      DATA RETURN AREA FOR STATUS RECORD
+*                       (USED BY UNITSTATUS)
+STDPAB  BSS     >10     GENERAL PURPOSE PAB USED BY P-SYSTEM ACCESS
+PATHNM  BSS     >10     SPACE TO WRITE PATHNAME
+
+*ITEMS TO FIX IN THIS FILE
+*FIX REMCLR
+SGCHR  EQU    >EE60   THIS IS TEMPORARY VALUE; FIX UP LATER
+
+VIDLIB  DATA    6       XOP FOR VIDEO ACCESS
+KSCAN   DATA    5       KEYSCAN XOP
+CBH07   BYTE    7
+        EVEN
+
+******************************************
+
+*SPECIAL CHARACTERS HANDLING
+
+*CHARACTER HANDLING STATUS RECORD
+*INDEXES INTO STRUCTURE
+
+DEVOUT  EQU     0    BIOS OUTPUT ADDR FOR DEVICE IN QUESTION
+DEVIN   EQU     2    BIOS INPUT ADDRESS
+NSPC    EQU     4    IGNORE SPECIAL CHAR IF NONZERO
+NCRLF   EQU     6    IGNORE AUTO LINEFEED IF NONZERO
+DLESET  EQU     8    NEXT CHAR IS SPACE COUNT IF TRUE
+NEWLIN  EQU     10   NEXT CHAR STARTS A NEW LINE IF TRUE
+ALPLOK  EQU     12   UPPER CASE ONLY IF SET
+
+
+**********************************************************
+* DEVICE ROUTINE DISPATCH FUNCTION
+* PERMITS STANDARDIZED LOOKUP FOR EACH DEVICE
+
+*    CORRECT DEVICE EXECUTION ADDRESS IS ESTABLISHED THRU TWO
+*    TABLE STAGES:
+*      INDEX DEVTBL TO CORRECT DEVICE FUNCTION TABLE
+*      INDEX DEVICE FUNCTION TABLE TO ROUTINE EXE ADDR
+
+*      A ZERO ENCOUNTERED AT EITHER OF THESE  TABLES WILL
+*      RESULT IN AN INVALID DEVICE ERROR
+
+
+*TABLE LENGTH VALUE TO KEEP TABLE TO A REASONABLE SIZE
+*THIS MAY NEED CHANGE IN FUTURE.
+
+DEVCNT  DATA    15      TABLE LENGTH IN WORDS  (DSK1-DSK8)
+DEVTBL  DATA    BADDVV,CONSOL,SYSTRM,BADDVV,DSK,DSK
+        DATA    PRNTER,REM,REM,DSK,DSK,DSK,DSK,DSK,DSK
+
+* DISPATCH TO CORRECT ROUTINE
+*       ENTRY: R1=DEVICE #
+*              R0=FUNCTION OFFSET (0,2,4,6)
+
+DISPCH  CLR     @IORSLT       ASSUME NO ERROR
+        C       R1,@DEVCNT    TOO HIGH?
+        JHE     INVDEV        YES
+
+        MOV     R1,@UNITNO    SAVE IF NEEDED
+        SLA     R1,1          BYTE INDEX
+        A       @DEVTBL(R1),R0
+        MOV     *R0,R0        R0^DEV FUNCTION TABLE
+        B       *R0
+
+*OFFSETS INTO DEVICE FUNCTION TABLE
+READ    EQU     0
+WRITE   EQU     2
+CNTROL  EQU     4
+STAT    EQU     6
+CLEAR   EQU     8
+
+SYSTRM  DATA   BADOPL,BADOPL,BADOPL,BADOPL,BADOPL  NULL DEVICE FOR NOW
+CONSOL  DATA   CONRD,CONWRT,CONCTR,CONST,CONCLR
+DSK     DATA   DSKRD,DSKWRT,DSKCTR,DSKST,DSKCLR
+REM     DATA   REMIN,REMOUT,REMCTR,REMST,REMCLR
+PRNTER  DATA   BADOPL,PRTOUT,PRTCTR,PRTST,PRTCLR
+BADDVV  DATA   INVDEV,INVDEV,INVDEV,INVDEV,INVDEV
+
+BADOPL  LI      R0,BADOP
+        JMP     IORET
+
+INVDEV  LI      R0,BADDEV
+IORET   MOV     R0,@IORSLT
+        B       *BK
+***********************************************************
+* procedure calcdrvr ;   (uses r5 and r6)
+*
+* entry: R1=indicated device #
+*        BLOCKNO=INDICATED BLOCK NUMBER
+
+* returns -
+*           r1=physical device #
+*           BLOCKNO=PHYSICAL BLOCK NUMBER
+*                   (IF UNIT# IS A STANDARD UNIT THIS IS THE SAME
+*                    AS INDICATED BLOCK # ABOVE--OTHERWISE BLOCK #
+*                    IS INDEXED BY THE BLOCK OFFSET OF THE VIRTUAL
+*                    DEVICE)
+
+CLCDVR    CI    R1,8                    ; if unit# <= 8 then
+          JLE   CLCD8                   ;  (*standard unit*)
+*                                       ; endif
+          CI    R1,128                  ; else if unit# >= 128 then
+          JHE   CLCD8                   ;  (*user unit*)
+*                                       ; endif
+*         At this point unit is A) physical disk B) subsid vol C) serial
+          C     R1,@SUBST              ; else if unit < SUBST (IN
+*                                            SYSCOM)
+          JL    CLCD8                      ;  (*disk unit*)
+*                                       ; endif
+*         Check for Subsidiary Volume
+          MOV   @SUBST,R5               ; else r5 := start of subsid volumes
+          MOVB  @SUBMAX,R6              ; r6 := # of subsid volumes
+          SRL   R6,8
+          DEC   R6                      ; MAKE BASE 0
+          A     R6,R5                   ; r5 := last subsid volume
+          C     R1,R5                   ; if unit <= last subsid then
+          JGT   CLCD7                   ;  (*subsidiary volume*)
+          LI    R5,USIZE                ;  r5 := size of unit record entry
+          MPY   R1,R5                   ;  r6 := index into unit table
+          A     @UNITPT,R6              ;  r6 := ptr to desired unit entry
+          MOV   @PHYVOL(R6),R1          ;  R1 := physical volume
+          C     R1,@SUBST               ;  if R1 >= SUBST then
+          JHE   INVDEV                  ;   (* error - bad unit # *)
+*                                       ;  endif
+          MOV   @UBKOFF(R6),R5          ;  is it zero?
+          JEQ   INVDEV                  ;  (* not on line *)
+*                                       ;  endif
+          C     @BLCKNO,@UEOV(R6)       ;  if block # > eov then
+          JH    INVDEV                  ;  (* error - bad block *)
+*                                       ;  endif
+          A     R5,@BLCKNO              ;  calculate block number
+          RT                                 RETURN
+
+*                                       ; endif
+CLCD7     MOVB  @SERMAX,R6               ; r5 := # of serial units
+          SRL   R6,8
+          A     R6,R5                   ; r5 := last serial
+          C     R5,R1                   ; if last serial < unit # then
+          JL    INVDEV
+*                                       ; endif
+CLCD8     RT                            ; return
+**************************************************************
+
+*STANDARD PROCEDURE UNITBUSY
+UBUSY   CLR    @IORSLT  NEVER AN ERROR
+        INCT   SP
+        CLR    *SP      RETURN 'FALSE'
+        B      *BK
+
+*STANDARD PROCEDURE UNITWAIT
+UWAIT   CLR    @IORSLT  NO ERROR
+        INCT   SP
+        B      *BK
+
+*STANDARD PROCEDURE UNITCLEAR
+UCLEAR  MOV    *SP+,R1  DEVICE #
+        LI     R0,CLEAR
+        B      @DISPCH
+
+*STANDARD PROCEDURE UNITSTATUS
+STATRC  BSS     2       STATUS RECORD POINTER
+USTAT   MOV     *SP+,R0      CONTROL WORD
+        BL      @CTWORD
+        MOV     *SP+,@STATRC
+        MOV     *SP+,R1 DEVICE #
+        LI      R0,STAT
+        B       @DISPCH
+
+
+*SETS THE CONTROL WORD FUNCTION FLAGS FOR
+*USE BY ANY ROUTINE
+*ENTRY: R0=CONTROL WORD
+*NO OTHER REGISTERS AFFECTED
+
+CTWORD  MOV     R0,@CTRLWD
+        MOV     @CTRLWD,R0
+        ANDI    R0,4
+        MOV     R0,@NOSPEC  FLAG FOR SPECIAL CHAR
+        MOV     @CTRLWD,R0
+        ANDI    R0,8    SEE IF LINEFEED SUPPLIED
+        MOV     R0,@NOCRLF
+        MOV     @CTRLWD,R0
+        ANDI    R0,2
+        MOV     R0,@PHYSCT  PHYSICAL SECTOR MODE
+        RT
+
+**************************************************
+*UNITREAD/UNITWRITE STANDARD PROCEDURES
+* HANDLES ALL TYPES OF DEVICES
+* BOTH SYSTEM AND USER DEFINED
+
+UNITWT  LI      R5,WRITE
+        JMP     UNITIO
+
+UNITRD  LI      R5,READ
+
+*COMMON CODE FOR UNITREAD & UNITWRITE
+
+UNITIO  MOV     *SP+,R0       CONTROL WORD
+        BL      @CTWORD
+        MOV     R5,R0
+        MOV     *SP+,@BLCKNO LOGICAL BLOCK #
+        MOV     *SP+,@BYTCNT BYTE COUNTS
+        CLR     @DSKADR  STACK/HEAP AREA (HIWORD=0)
+        MOV     *SP+,@DSKADR+2  BYTE OFFSET
+        A       *SP+,@DSKADR+2  ADD WORD BASE
+        MOV     *SP+,R1 UNIT #
+        BL      @CLCDVR   GET PHYSICAL DEVICES
+        B       @DISPCH
+
+**************************************
+*  DEVICE ACCESS PRIMITIVES          *
+*  (BASED ON SBIOS)
+**************************************
+
+SYSHLT    BSS       2    DUMMY ENTRY (SHUTDOWN)
+
+**********FLOPPY DISKS**************
+*ALL TRANSFERS ARE THROUGH STRBF'S IN PME BECAUSE AN
+*ENTIRE SECTOR IS NOT ALWAYS REQUESTED
+*CAN READ DATA TO ANYWHERE IN P-SYSTEM MAP
+*(FOR USE BY READSEG)
+*CONTROL WORD FLAGS AND DSKADR MUST BE PREPARED BEFORE RSP CALL
+
+DSKADR  BSS     4       32 BIT ADDRESS FOR DISK SOURCE/DEST
+*                       WORD1=HIWORD (NORMALLY 0000 EXCEPT FOR
+*                          CALLS BY READSEG)
+*                       WORD2=LOWORD
+
+DSKCLR
+DSKCTR  CLR     @IORSLT
+        B       *BK
+
+DSKRD   MOV     @PHYSCT,R0    TEST IF PHYSICAL SECTOR I/O
+        JNE     PDSKRD        YES, IT IS
+
+DSKR3   MOV     @UNITNO,R0    DEVICE # (MUST BE VALID DISK DRIVE)
+        MOV     @BLCKNO,R1
+        SLA     R1,1    TRANSLATE LOGICAL BLOCK TO PHYSICAL SECTOR
+        INC     @BLCKNO PREPARE FOR READING NEXT BLOCK
+        LI      R2,2    READ 2 PHYSICAL SECTORS
+        LI      R5,STRBF1     LOWEST 16 BITS OF TRUE ADDRESS
+        CLR     R4            SYSTEM IS AT BOTTOM OF MEMORY MAPPED
+*                             TO PME; THEREFORE HI BYTE OF PME ADDRESS
+*                             (WHICH CONTAINS STRBF) IS 00
+        BL      @DSKRDX       READ THE TWO BLOCKS INTO BUFFER
+        MOV     @IORSLT,@IORSLT
+        JNE     DSKR4         ERROR, QUIT NOW
+        MOV     @DSKADR,R4    HI WORD DESTINATION
+        MOV     @DSKADR+2,R5  LO WORD DESTINATION
+
+*PREPARE TO MOVE TO RAM
+        CLR     R6
+        LI      R7,STRBF1     SOURCE
+        MOV     @BYTCNT,R1    TOTAL BYTE COUNT LEFT
+        MOV     R1,R0         EXTRA COPY COUNT
+        CI      R0,512        COPY FULL BUFFER?
+        JLT     DSKR2         NO, USE COUNT AS IS
+        LI      R1,512        MOVE 512 BYTES
+DSKR2   AI      R0,-512
+        MOV     R0,@BYTCNT    STORE UPDATED COUNT
+        BLWP    @LNGMOV
+
+        MOV     @DSKADR,R6    UPDATE DESTINATION PTR
+        MOV     @DSKADR+2,R7
+        BL      @LNGADD
+        MOV     R6,@DSKADR
+        MOV     R7,@DSKADR+2  SAVE UPDATED POINTER
+* *  *
+
+        MOV     @BYTCNT,@BYTCNT
+        JGT     DSKR3   MORE SECTORS TO GO.....
+DSKR4   B       *BK     DONE
+
+*PHYSICAL SECTOR DISK READ
+*MODIFIED FOR FULL ADDRESSING 1/30/88
+PDSKRD  MOV     @BLCKNO,R1
+        LI      R2,1    READ 1 PHYSICAL SECTOR
+        MOV     @DSKADR+2,R5  LOWEST 16 BITS OF TRUE ADDRESS
+        MOV     @DSKADR,R4    HI WORD
+        BL      @DSKRDX       READ THE BLOCK INTO BUFFER
+        B       *BK     DONE
+
+
+*MODIFIED FOR NEW ADDRESSING  1/30/88
+DSKWRT  MOV     @PHYSCT,R0    TEST IF PHYSICAL SECTOR I/O
+        JNE     PDSKWT        YES, IT IS
+
+DSKWT3  MOV     @DSKADR,R6    SET UP SOURCE
+        MOV     @DSKADR+2,R7
+
+        CLR     R4      STRBUF IS TEMP DEST
+        LI      R5,STRBF1
+        MOV     @BYTCNT,R1    TOTAL BYTE COUNT LEFT
+        MOV     R1,R15         EXTRA COPY
+        CI      R1,512        COPY FULL BUFFER?
+        JLT     DSKWT2        NO
+        LI      R1,512        # BYTES TO MOVE
+DSKWT2  AI      R15,-512
+        MOV     R15,@BYTCNT    STORE UPDATED COUNT
+        BLWP    @LNGMOV
+        MOV     @DSKADR+2,R7
+        MOV     @DSKADR,R6
+        MOV     R15,R1
+        BL      @LNGADD       UPDATE RAM POINTER
+        MOV     @UNITNO,R0    DEVICE # (MUST BE VALID DISK DRIVE)
+        MOV     @BLCKNO,R1
+        SLA     R1,1    TRANSLATE LOGICAL BLOCK TO PHYSICAL SECTOR
+        INC     @BLCKNO PREPARE FOR WRITING NEXT BLOCK
+        LI      R2,2    WRITE 2 PHYSICAL SECTORS
+        LI      R5,STRBF1     LOWEST 16 BITS OF TRUE ADDRESS
+        CLR     R4            HIWORD=0
+        BL      @DSKWRX       WRITE THE TWO BLOCKS
+        MOV     @IORSLT,@IORSLT  CHECK FOR ERROR
+        JNE     DSKWT4   TROUBLE
+        MOV     @BYTCNT,@BYTCNT
+        JGT     DSKWT3  MORE SECTORS TO GO.....
+DSKWT4  B       *BK     DONE
+
+*PHYSICAL SECTOR DISK WRITE
+*MODIFIED FOR LONG ADDRESS 1/30/88
+
+PDSKWT  MOV     @BLCKNO,R1
+        LI      R2,1    READ 1 PHYSICAL SECTOR
+        MOV     @DSKADR+2,R5  LOWEST 16 BITS OF TRUE ADDRESS
+        MOV     @DSKADR,R4    HI WORD
+        BL      @DSKWRX       READ THE BLOCK INTO BUFFER
+        B       *BK     DONE
+
+
+*CONVERT UNIT # TO DISK NAME AND INSERT INTO PAB
+*ENTRY: UNIT # IN UNITNO
+
+*EXIT:  DSK NAME LOADED INTO STDPAB
+*   R0,R6,R7 ALTERED
+
+*INDEXES INTO DSKTBL FOR DSK1 THRU 5
+DSKNO   DATA    DSKTBL,DSKTB2,0,0,0,DSKTB3,DSKTB4,DSKTB5
+        DATA    DSKTB6,DSKTB7,DSKTB8
+
+*PADDED OUT TO 6 CHAR FOR WORD BOUNDARIES
+DSKTBL  DATA    5
+        TEXT    'DSK1.                                   '
+DSKTB2  DATA    5
+        TEXT    'DSK2.                                   '
+DSKTB3  DATA    5
+        TEXT    'DSK3.                                   '
+DSKTB4  DATA    5
+        TEXT    'DSK4.                                   '
+DSKTB5  DATA    5
+        TEXT    'DSK5.                                   '
+DSKTB6  DATA    5
+        TEXT    'DSK6.                                   '
+DSKTB7  DATA    5
+        TEXT    'DSK7.                                   '
+DSKTB8  DATA    5
+        TEXT    'DSK8.                                   '
+
+SETDSK  MOV     @UNITNO,R0
+        AI      R0,-4       NORMALIZE TO 4 BASE 0
+        SLA     R0,1        BYTE OFFSET
+        AI      R0,DSKNO
+        MOV     *R0,R0      CONTAINS DSKTBL OFFSET
+        LI      R7,PATHNM-2
+        MOV     *R0+,R6     GET PATHNAME LENGTH
+        MOV     R6,*R7+
+        JEQ     SETDS2      PATHNAME LENGTH IS ZERO
+SETDS1  MOV     *R0+,*R7+
+        DECT    R6
+        JGT     SETDS1      PATHNAME LENGTH
+SETDS2  RT
+
+*LOW LEVEL DISKREAD
+* LOWEST LEVEL LINK TO OPERATING SYSTEM
+* CAN BE USED BY PHYSICAL OR LOGICAL SECTOR CALLS
+
+*ENTRY: UNITNO=UNIT NUMBER (SHOULD BE VALID FOR DISK)
+*       R1=SECTOR # (ACTUAL 256 BYTE SECTOR)
+*          DISK RELATIVE
+*       R2=# SECTORS TO READ
+*       R4,5=24 BIT DEST ADDRESS (MYARC FORMAT)
+*            (8 HI BITS IN LOW WORD OF R4)
+*EXIT:  DATA READ
+*       IORSLT  LOADED
+
+        BSS     2
+DSKRDX  MOV     R11,@DSKRDX-2  SAVE RETURN ADDR
+        BL      @SETDSK SET PATH NAME
+        MOV     R4,@STDPAB+2  CLEAR ERROR AND LOAD HI-BITS
+        MOV     R5,@STDPAB+4  REST OF BUFFER ADDRESS
+        MOV     R2,@STDPAB+12 SECTOR COUNT
+        MOV     R1,@STDPAB+6  SECTOR#
+        LI      R0,>0A00   BINARY READ
+        MOVB    R0,@STDPAB
+        LI      R0,>0500  LEN OF PATHNAME
+        MOVB    R0,@STDPAB+>F
+        LI      R0,STDPAB  ASSUME PAB ON SAME PAGE AS CODE
+        CLR     @STDPAB+10  TO CPU MEMORY
+        XOP     @IOLIB,0 READ THE STUFF
+        BL      @GETERR TRANSLATE ERROR CODES
+        MOV     @DSKRDX-2,R11
+        RT
+
+* LOWEST LEVEL LINK TO OPERATING SYSTEM
+* CAN BE USED BY PHYSICAL OR LOGICAL SECTOR CALLS
+
+*ENTRY: UNITNO=UNIT NUMBER (SHOULD BE VALID FOR DISK)
+*       R1=SECTOR # (ACTUAL 256 BYTE SECTOR)
+*       R2=# SECTORS TO WRITE
+*       R4,5=24 BIT BUFFER ADDRESS
+*            (8 HI BITS IN R4)
+*EXIT:  DATA WRITTEN
+*      IORSLT LOADED
+
+DSKWRX  MOV     R11,@DSKRDX-2  SAVE RETURN ADDR
+        BL      @SETDSK SET PATH NAME
+        LI      R0,>0B00   BINARY WRITE
+        MOVB    R0,@STDPAB
+        MOV     R4,@STDPAB+2  CLEAR ERROR AND LOAD HIBITS
+        MOV     R5,@STDPAB+4  REST OF BUFFER ADDRESS
+        MOV     R1,@STDPAB+6  SECTOR#
+        CLR     @STDPAB+10    CPU BUFFER
+        MOV     R2,@STDPAB+12  SECTOR
+        LI      R0,>0500  LEN OF PATHNAME
+        MOVB    R0,@STDPAB+15
+        LI      R0,STDPAB  ASSUME PAB ON SAME PAGE AS CODE
+        XOP     @IOLIB,0 READ THE STUFF
+        BL      @GETERR TRANSLATE ERROR CODES
+        MOV     @DSKRDX-2,R11  RETURN ADDRESS
+        RT
+
+*GETERR TRANSLATES DOS ERROR INTO P-SYSTEM ERROR CODES
+*MUST BE CALLED IMMEDIATELY AFTER LAST ACCESS
+*CAN BE CALLED BY ANY ROUTINE USING A PAB
+
+*ENTRY: R0=^PAB
+*EXIT:  IORSLT LOADED
+
+DSKERR  DATA    2,16,3,3,15,17,2,4
+
+*TEMPORARY TILL WE GET THIS STRAIGHT
+GETERR  RT
+
+*GETERR  CLR     R1
+        MOVB    @STATUS,R1 STATUS WORD
+        ANDI    R1,>0400 CHECK BIT 2
+        JNE     GETR2   YUP TROUBLE
+        CLR     @IORSLT
+        RT
+
+GETR2   AI      R0,2   ^SYSTEM ERROR CODE
+        MOVB    *R0,R0
+        SRL     R0,11   3 HI BITS
+        ANDI    R0,>E   ELIM ODD BIT
+        A       @DSKERR,R0
+        MOV     *R0,@IORSLT
+        RT
+
+
+*DISK STATUS ROUTINE
+*RETURNS MYARC STATUS BYTE @STATUS RECORD+29
+*SETS IORSLT
+*NO OTHER INFO IS RETURNED AT THIS TIME HOWEVER ANY OF THE
+*BYTES 0-28 ARE AVAILABLE FOR FUTURE EXTENSIONS
+*EXPECTS DISK # IN UNITNO
+*STATUS RECORD POINTER AT USTAT
+
+DSKST   BL      @SETDSK GET DISK NAME
+        LI      R0,>0900 STATUS OPCODE
+        MOVB    R0,@STDPAB
+        LI      R0,STDPAB
+        XOP     @IOLIB,0
+        BL      @GETERR  ASSUMES R0 STILL INTACT AFTER XOP
+        MOV     @RETST,R0
+        AI      R0,29
+        MOVB    @STDPAB+14,*R0   WRITE TO LAST BYTE OF RECORD
+        B       *BK
+
+*************************************************
+* SETS THE LOCAL CRLF AND NOSPEC FLAGS
+* BASED ON THE VALUES PASSED BY UNITIO CONTROL WORD
+* ENTRY:                   USES R0
+*       R5=^DEVICE RECORD
+* EXIT:
+*       FLAGS SET
+
+SETREC  MOV     @NOSPEC,@NSPC(R5)
+        MOV     @NOCRLF,@NCRLF(R5)
+
+
+*SETREC  CLR     @NSPC(R5)     ASSUME NO SPECIAL HANDLING
+*       CLR     @NCRLF(R5)
+*       MOV     @CTRLWD,R0    GET THE CONTROL WORD
+*       COC     @NCRLFM,R0    CR LF FLAG SET?
+*       JNE     SETRE1        NO
+*       SETO    @NCRLF(R5)    YES
+*SETRE1  COC     @NSPECM,R0    SPECIAL CHARACTER FLAG
+*       JNE     SETRE2        NO
+*       SETO    @NSPC(R5)     YES
+SETRE2  RT
+
+*******************REMOTE UNIT SERVICE
+
+REMCTR  CLR     @IORSLT  STUB
+        B       *BK
+
+*REMOTE UNIT STATUS RECORD
+REMREC  DATA    RMOBIO,RMIBIO
+        BSS     10
+RMIPAB  BSS     15      SERVICE PAB MAINTAINED FOR REM UNIT
+        BYTE    14      LENGTH OF FILE NAME
+        TEXT    'RS232.BA=9600.'
+        EVEN
+
+RMOPAB  BSS     15      SERVICE PAB MAINTAINED FOR REM UNIT
+        BYTE    14      LENGTH OF FILE NAME
+
+REMCLR  B       *BK      STUB
+*REMCLR  LI      R0,>0014 '00010100' SEQUENTIAL, INPUT, DISPLAY
+*                        VARIABLE RECORDS
+        MOV     R0,@RMIPAB  SET MODE BYTE & OPCODE
+        LI      R0,SGCHR BUFFER FOR CHARACTER
+        MOV     R0,@RMIPAB+4
+        LI      R0,RMIPAB
+        XOP     @IOLIB,0  OPEN THE CHANNEL
+        LI      R0,>0012 '00010010' SEQUENTIAL, OUTPUT, DISP
+*                        VARIABLE RECORDS
+        MOV     R0,@RMOPAB  SET MODE BYTE & OPCODE
+        LI      R0,SGCHR BUFFER FOR CHARACTER
+        MOV     R0,@RMOPAB+4
+        LI      R0,RMOPAB
+        XOP     @IOLIB,0  OPEN THE CHANNEL
+        LI      R0,RMOPAB
+        BL      @GETERR
+        LI      R0,REMREC
+        B       @CLR
+
+*REMOTE STATUS ROUTINE
+*RETURNS MYARC STATUS BYTE @STATUS RECORD+29
+*SETS IORSLT
+*NO OTHER INFO IS RETURNED AT THIS TIME HOWEVER ANY OF THE
+*BYTES 0-28 ARE AVAILABLE FOR FUTURE EXTENSIONS
+*EXPECTS STATUS RECORD POINTER AT USTAT
+
+REMST   LI      R0,>0900 STATUS OPCODE
+        MOVB    R0,@RMIPAB
+        LI      R0,RMIPAB
+        XOP     @IOLIB,0
+        BL      @GETERR  ASSUMES R0 STILL INTACT AFTER XOP
+        MOV     @USTAT,R0
+        AI      R0,29
+        MOVB    @RMIPAB+14,*R0   WRITE TO LAST BYTE OF RECORD
+        B       *BK
+
+*BIOS LEVEL REMOUT
+*       ENTRY: CHR IS IN HIBYTE OF SGCHR
+*       EXIT: CHR WRITTEN, IORSLT SET, R0 ALTERED
+
+        BSS     2
+RMOBIO  MOV     R11,@RMOBIO-2
+        LI      R0,>0300 WRITE OPCODE
+        MOVB    R0,@RMOPAB
+        LI      R0,1    1 CHARACTER
+        MOV     R0,@RMOPAB+12
+        LI      R0,RMOPAB
+        XOP     @IOLIB,0
+        BL      @GETERR
+        MOV     @RMOBIO-2,R11
+        RT
+
+
+*BIOS LEVEL REMIN
+*       ENTRY:  NONE
+*       EXIT:   CHR IN SGCHR, IORSLT SET, R0 ALTERED
+
+RMIBIO  MOV     R11,@RMOBIO-2
+        LI      R0,>0200 READ OPCODE
+        MOVB    R0,@RMIPAB
+        LI      R0,1    1 CHARACTER
+        MOV     R0,@RMIPAB+12
+        LI      R0,RMIPAB
+        XOP     @IOLIB,0
+        BL      @GETERR
+        MOV     @RMOBIO-2,R11
+        RT
+
+
+*REMOTE  READ ROUTINE (RSP LEVEL)
+*MODIFIED FOR LONG ADDRESS 1/30/88
+
+*BUFFER CAN CONTAIN ANY NUMBER OF CHARACTERS
+*SOURCE BUFFER IS ALWAYS IN STACK HEAP RAM
+
+*ENTRY: DSKADR=HIWORD (ALWAYS 0)
+*       DSKADR+2=16 BIT ADDRESS OF DESTINATION
+*       BYTCNT=# BYTES TO WRITE (VALUE DESTROYED AFTER CALL)
+*DOES NOT DO ANY SPECIAL CHARACTER FILTERING
+*       EXCEPT ALPHALOCK
+
+REMIN   LI      R5,REMREC
+        BL      @SETREC SET THE LOCAL RECORD
+        MOV     @DSKADR+2,R7  R7=^DEST BUFFER
+RMIN1   BL      @RMIBIO  READ THE CHAR
+        MOV     @REMREC+ALPLOK,@REMREC+ALPLOK
+        JEQ     RMIN2   NOT ALPHALOCK
+        BL      @CAPSET
+RMIN2   MOVB    @SGCHR,*R7+   STORE THE BYTE
+        DEC     @BYTCNT BYTCNT HAS BEEN SET BY UNITREAD
+        JNE     RMIN1
+        B       *BK
+
+
+*REMOTE WRITE ROUTINE (RSP LEVEL)
+*BUFFER CAN CONTAIN ANY NUMBER OF CHARACTERS
+*USING MULTIPLE CALLS TO PUTCHR
+*ENTRY: DSKADR=HIWORD (ALWAYS 0)
+*       DSKADR+2=16 BIT ADDRESS OF SOURCE
+*       BYTCNT=# BYTES TO WRITE (VALUE DESTROYED AFTER CALL)
+
+REMOUT  LI      R5,REMREC
+        LI      R7,DSKADR+2   R7=^SOURCE BUFFER
+        BL      @SETREC       SET LOCAL RECORD
+RMLOOP  MOVB    *R7+,@SGCHR   FETCH THE BYTE
+        BL      @PUTCHR PRINT THE CHARACTER
+        DEC     @BYTCNT BYTCNT HAS BEEN SET BY UNITWRITE
+        JNE     RMLOOP
+        B       *BK
+
+*****PRINTER ROUTINES
+
+*PRINTER STATUS RECORD
+PRTREC  DATA    0,PRTOUT
+        BSS     10
+PRTPAB  BSS     15
+        BYTE    3        LENGTH OF NAME
+        TEXT    'PIO'
+
+PRTCLR  LI      R0,PRTPAB
+        LI      R0,>0012 '00010010' SEQUENTIAL, OUTPUT, DISPLAY
+*                        VARIABLE RECORDS
+        MOV     R0,@PRTPAB  SET MODE BYTE & OPCODE
+        LI      R0,SGCHR BUFFER FOR CHARACTER
+        MOV     R0,@PRTPAB+4
+        LI      R0,PRTPAB
+        XOP     @IOLIB,0  OPEN THE CHANNEL
+        LI      R0,PRTPAB
+        BL      @GETERR
+        LI      R0,PRTREC
+        B       @CLR
+
+*STUB FOR PRINTER
+
+PRTCTR
+PRTST   CLR     @IORSLT
+        B       *BK
+
+
+*******************************************
+*PRINTER ROUTINE (RSP LEVEL)
+*BUFFER CAN CONTAIN ANY NUMBER OF CHARACTERS
+*USING MULTIPLE CALLS TO PUTCHR
+*ENTRY: DSKADR & DSKADR+2 CONTAIN 2 WORDS OF
+*       SOURCE BUFFER.  2ND WORD IS TRUE ADDRESS
+*       IN SYSTEM RAM BLOCK
+*       BYTCNT=# BYTES TO WRITE (VALUE DESTROYED AFTER CALL)
+
+PRTOUT  LI      R5,PRTREC
+        MOV     @DSKADR+2,R7   R7=^SOURCE BUFFER
+        BL      @SETREC
+PRTLP   MOVB    *R7+,@SGCHR    FETCH THE BYTE
+        BL      @PUTCHR PRINT THE CHARACTER
+        DEC     @BYTCNT BYTCNT HAS BEEN SET BY UNITWRITE
+        JNE     PRTLP
+        B       *BK
+
+
+*********************CONSOLE UNIT SERVICE
+
+*CONSOLE UNIT STATUS RECORD
+CONREC  DATA    CRTBIO,KEYBIO
+        BSS     10
+
+CONST
+CONCTR  CLR     @IORSLT  STUB
+        B       *BK
+
+
+*SETS UP VIDE0-%ODE 1 AND CLEARS SCREEL
+CONCLR  CLR     R0
+        LI      R1,1     VID MODE 1
+        XOP     @VIDLIB,0
+        LI      R1,>0F00      WHITE ON BLACK TEXT COLOR
+        LI      R0,>29
+        XOP     @VIDLIB,0
+        LI      R0,>2000
+        MOVB    R0,@SGCHR
+        BL      @CRTBIO  PRINT A BLANK
+        LI      R0,>0C00  FORMFEED
+        MOVB    R0,@SGCHR
+        BL      @CRTBIO  CLEAR THE SCREEN
+        LI      R0,CONREC
+        B       @CLR
+
+*******************************************
+*GENERAL PURPOSE CLEAR ROUTINE
+*ENTRY: R0=^DEVICE RECORD
+*RESETS ALL CONTROL PARAMETERS
+
+        BSS     2
+CLR     MOV     R1,@CLR-2
+        MOV     R0,R1    PROTECT THIS REGISTER
+        CLR     @NSPC(R1)
+        CLR     @NCRLF(R1)
+        CLR     @DLESET(R1)
+        CLR     @NEWLIN(R1)
+        CLR     @ALPLOK(R1)
+        MOV     @CLR-2,R1
+        B       *BK
+
+*CONSOLE READ ROUTINE RSP LEVEL
+*ENTRY: DSKADR & DSKADR+2 CONTAIN 2 WORDS OF
+*       SOURCE BUFFER.  2ND WORD IS TRUE ADDRESS
+*       IN SYSTEM RAM BLOCK
+*       BYTCNT=# BYTES TO READ  (VALUE DESTROYED AFTER CALL)
+
+CONRD   MOV     @DSKADR+2,R7  DESTINATION BUFFER
+        LI      R5,CONREC
+        BL      @SETREC
+        CLR     R5
+        MOVB    @CHRMSK,R5
+        INV     R5   NEGATIVE IMAGE OF MASK
+        CLR     R6
+        MOVB    @BRKCHR,R6  BREAK CHARACTER BYTE
+CONR1   BL      @KEYBIO  GET THE NEXT KEY
+        SOC     R5,@SGCHR    CHARACTER MASK
+        MOV     @CONREC+ALPLOK,@CONREC+ALPLOK  ALPHA LOCK MODE?
+        JEQ     CONR2    NO
+        BL      @CAPSET
+CONR2   MOVB    @SGCHR,*R7+   STORE BYTE
+
+* * * * * *
+*THIS SECTION ECHOS CHARACTER TO SCREEN AS IMPLIED BY PG 6-28
+*HOWEVER THIS IS NOT SPECIFIED IN THE DESCRIPTION OF THE RSP I/O
+*CAN BE ELIMINATED WITHOUT PROBLEM
+        BL      @CRTBIO  PRINT TO SCREEN
+        CLR     R1
+        MOVB    @SGCHR,R1
+        CI      R1,>0D00 NEW LINE?
+        JNE     CONR3
+        LI      R1,>0A00 LINEFEED
+        MOVB    R1,@SGCHR
+        BL      @CRTBIO  ECHO TO SCREEN
+**********
+
+CONR3   DEC     @BYTCNT
+        JNE     CONR1    GET ANOTHER CHARACTER
+        B       *BK
+
+* WAITS FOR THE NEXT KEY AND RETURNS
+* KEY VALUE IN SGCHR TO STAY COMPATATIBLE WITH OTHER
+* CHARACTER BASED INPUT
+
+KEYBIO  LI      R0,5     SCAN MODE 5 (99/4A MODE)
+        XOP     @KSCAN,0
+        JNE     KEYBIO+2 NO KEY PRESSED
+        MOVB    R1,@SGCHR
+        RT
+
+
+*******************************************
+*CONSOLE WRITE ROUTINE (RSP LEVEL)
+*   REV 12/28/88
+*BUFFER CAN CONTAIN ANY NUMBER OF CHARACTERS
+*USING MULTIPLE CALLS TO PUTCHR
+*ENTRY: DSKADR & DSKADR+2 CONTAIN 2 WORDS OF
+*       SOURCE BUFFER.  2ND WORD IS TRUE ADDRESS
+*       IN SYSTEM RAM BLOCK
+*       BYTCNT=# BYTES TO WRITE (VALUE DESTROYED AFTER CALL)
+
+
+CONWRT  LI      R5,CONREC      CONSOLE STATUS RECORD
+        BL      @SETREC
+        MOV     @DSKADR+2,R7   R7=^SOURCE BUFFER
+CNLOOP  MOVB    *R7+,@SGCHR    FETCH THE BYTE
+        BL      @PUTCHR PRINT THE CHARACTER
+        DEC     @BYTCNT BYTCNT HAS BEEN SET BY UNITWRITE
+        JNE     CNLOOP
+        B       *BK
+
+********************************************
+*CONVERTS TO CAPITAL LETTERS
+*ENTRY CHAR=@SGCHR
+*EXIT CHAR CONVERTED IF REQUIRED
+
+CAPSET  CLR     R1
+        MOVB    @SGCHR,R1
+        CI      R1,>6100
+        JLT     CPST1        ASC<97
+        CI      R1,>7A00     ASC>122
+        JGT     CPST1
+        ANDI    R1,>DF00
+        MOVB    R1,@SGCHR
+CPST1   RT
+********************************************
+
+*PUTCHR IS THE RSP LEVEL CHARACTER OUTPUT ROUTINE
+*FOR PRINTER, TTY, REMOTE & SERIAL
+*ACCESSED BY BL FROM THE APPORPRIATE DEVICE DRIVER
+*    REV 12/28/88
+
+*EACH OF THE CHARACTER DEVICES HAS ITS
+*OWN SET OF FLAGS FOR SPECIAL CHARACTER STATUS
+*THIS STATUS IS MAINTAINED BETWEEN CALLS
+*IN THE DEVICE'S STATUS RECORD
+
+*PUTCHR IS THE GENERAL PURPOSE ROUTINE FOR PLACING
+*CHARACTERS IN THE APPROPRIATE OUTPUT DEVICE
+
+*ENTRY: SGCHR=CHAR (IN MS BYTE)
+*       R5=^RECORD FOR THIS DEVICE
+
+*EXIT:  CHARACTER OUTPUTTED AS REQUIRED
+*REGISTER USAGE: R3,R4,R5,R6 + REGISTERS ALTERED BY
+*         BIOS ROUTINE CALLED
+
+*SGCHR   BSS     2       ACTUALLY STORES CHAR IN HIBYTE
+
+        BSS     2
+PUTCHR  MOV     R11,@PUTCHR-2
+        MOV     *R5,R4  GET BIOS ADDRESS
+        CLR     R6
+        MOV     @NSPC(R5),@NSPC(R5) SPECIAL HANDLING
+        JNE     PUTCH5  IGNORE SPECIAL CHARACTERS
+        MOV     @DLESET(R5),@DLESET(R5)
+        JEQ     PUTCH3  DLE FLAG IS NOT SET FOR THIS DEVICE
+
+* DLE WAS SET; CLEAR IT AND EXPAND CHARACTER COUNT
+        CLR     @DLESET(R5)   CLEAR DLE FLAG
+        MOVB    @SGCHR,R6  CHECK THE COUNT
+        JLT     PUTCH2  NEGATIVE BYTE VALUE, ABORT
+        LI      R3,>2000  SPACE
+        MOVB    R3,@SGCHR  EXPANDING OUT SPACES
+        SWPB    R6      GET COUNT
+        AI      R6,-32  NORMALIZE
+        JLT     PUTCH2  NEGATIVE VAL AFTER NORM, ABORT
+PUTCH1  BL      *R4
+        DEC     R6
+        JNE     PUTCH1
+        JMP     PUTCH2  DONE; RETURN
+
+PUTCH3  MOVB    @SGCHR,R6
+        CI      R6,>0D00  CR?
+        JNE     PUTCH4   NOT A CR
+        SETO    @NEWLIN(R5)   SET NEWLINE FLAG
+        BL      *R4     CALL SPECIFIC BIOS ROUTINE
+        MOV     @NCRLF(R5),@NCRLF(R5)   AUTO LINEFEED?
+        JNE     PUTCH6   DONE
+        LI      R2,>0A00  LINEFEED TO FOLLOW
+        MOVB    R2,@SGCHR
+        BL      *R4
+        JMP     PUTCH6  DONE
+
+PUTCH4  MOVB    @SGCHR,R6
+        CI      R6,>1000  IS IT A DLE?
+        JNE     PUTCH5  NOT A DLE EITHER
+        MOV     @NEWLIN(R5),@NEWLIN(R5)  ONLY VALID AT START OF LINE
+        JEQ     PUTCH6        CANT BE RIGHT
+        SETO    @DLESET(R5)   SET DLE FLAG
+        JMP     PUTCH2  DONE FOR THIS CHAR
+
+*IF WE'VE GOTTEN THIS FAR, IT MUST BE AN ORDINARY CHARACTER
+PUTCH5  BL      *R4     PRINT IT
+
+PUTCH2  CLR     @NEWLIN(R5)
+PUTCH6  MOV     @PUTCHR-2,R11 ENTER HERE ONLY AFTER SETTING NL
+        RT
+
+**************************************************
+*BIOS LEVEL TTY OUTPUT ROUTINE
+*ENTRY: CHAR IN SGCHR (HI BYTE)
+*VERSION 9/4/87 SIMPLY PLACES CHARACTER ON SCREEN
+*   ASSUMING THAT XOP HANDLES LF,CR,FF CORRECTLY
+*   ALSO BELL IS CURRENTLY IGNORED
+
+CRTBIO  MOVB    @SGCHR,R0     COPY OF BYTE
+        JEQ     CRTBI1        NULL, GO BACK
+        CB      R0,@CBH07     CHECK FOR BELL
+        JNE     CRTBI2
+*PUT BELL SERVICE ROUTINE HERE
+        LI      R0,BEEPTN
+        MOV     *R0+,R1
+        CLR     R2                    NEW CRTBIO
+        CLR     R3                        LWPI  CRTWSP
+        MOV     *R0+,R4                   CB    *R1,@CBH07  BELL?
+        MOV     *R0+,R5                   JEQ   BEEPIT      YES
+        MOV     *R0+,R6                   XOP   @VIDLIB,0
+        MOV     *R0,R7                    LWPI  MAINWP
+        LI      R0,>33                    RT
+        XOP     @VIDLIB,0
+        RT              RETURN       BEEPIT LWPI MAINWP   AND CONTINUE FROM HERE
+
+CRTBI2  LI      R0,>27   OPCODE FOR TTY WRITE
+        LI      R1,SGCHR
+        LI      R2,1
+        XOP     @VIDLIB,0
+CRTBI1  RT
+
+BEEPTN  DATA    1399
+        DATA    >020F
+        DATA    >0F00
+        DATA    >000F
+        DATA    10
+**************************************************
+

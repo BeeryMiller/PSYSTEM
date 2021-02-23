@@ -1,0 +1,42 @@
+       REF  DSRLNK,VMBW
+       DEF  START
+
+DSIOPB DATA >01FF,>2000,0
+IOOPCD DATA >0110
+CBH00  BYTE 0
+CBHFF  BYTE >FF
+
+MYWS   BSS  32
+
+START  BLWP @DOIT
+       RT
+
+DOIT   DATA MYWS,DOIT1
+
+DOIT1  MOV  @DSIOPB,@>834C
+       MOV  @DSIOPB+2,@>834E
+       MOV  @DSIOPB+4,@>8350
+       LI   R0,>1FF0
+       LI   R1,IOOPCD
+       LI   R2,2
+       BLWP @VMBW
+       CLR  R1
+
+LOOP   MOVB @CBHFF,@>834D     SIGNIFY READ
+       MOV  R1,@>8350         SECTOR NUMBER
+       LI   R2,>1FF0
+       MOV  R2,@>8356
+       BLWP @DSRLNK
+       DATA 10
+
+       MOVB @CBH00,@>834D     WRITE
+       MOV  R1,@>8350         SECTOR
+       LI   R2,>1FF0
+       MOV  R2,@>8356
+       BLWP @DSRLNK
+       DATA 10
+       INC  R1
+       CI   R1,>5A00
+       JNE  LOOP
+       RTWP
+       END

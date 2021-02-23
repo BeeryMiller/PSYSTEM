@@ -1,0 +1,73 @@
+*HEADER1 3/18/89.1
+
+*NEEDED FOR DEBUGGING
+       COPY "EQUDEBUG"
+
+
+       REF  START
+*
+       IF   DEBUG
+       DATA >2C40
+       MOV  @0,@SVZERO
+       FI
+*
+PSTART B    @START
+*
+       IF   DEBUG
+SVZERO DATA 0
+       FI
+
+*****************************
+
+TRUE
+ONE     DATA    1
+HSMRGN  EQU    >40      HEAP/STACK MARGIN
+*****************************
+       DEF  NXTBYT,TSKSCH,CURPOL
+       DEF  MOVEB
+       DEF  LNGMOV,LNGADD
+       DEF  OPTABL,CURTSK
+       DEF  BACK,SEGHI,CPOFST
+       DEF  READYQ,EVEC,EREC
+       DEF  SIB
+       DEF  BASE
+       DEF  ENVVEC
+       DEF  CURPRO
+       DEF  CPOOL
+
+       IF   DEBUG
+       DEF  RSBYTE
+       FI
+
+*****************************
+        REF ROOTSK,TIMSTP,XEQERR
+        REF UNITRD,UNITWT,UBUSY,UWAIT,UCLEAR,USTAT
+        REF IORSLT
+        REF SYSMAP,DSKADR,PHYSCT,BLCKNO,BYTCNT,UNITNO,DSKRD
+        REF FTNWDS,FTEREC,FLTTIB,FLTNUM,FLTSEM
+        REF MEMORY
+        REF CTWORD,CLCDVR
+****************************
+       COPY              "EQUATES"
+       COPY              "PMKER3"
+       COPY              "PMKER2"
+       COPY              "PMKER1"
+       COPY              "STDPRO"
+       COPY              "STDPR2"
+       COPY              "STDPR3"
+       COPY              "STDPR4"
+       COPY              "PME1"
+       COPY              "PME2"
+       COPY              "PME2B"
+       COPY              "PME2A"
+       COPY              "PME3"
+       COPY              "PME4"
+       COPY              "PME5"
+       COPY              "PME6"
+*
+       IF   DEBUG
+       COPY              "RSMONS"
+       FI
+*
+       END
+

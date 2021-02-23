@@ -1,0 +1,706 @@
+*BOOT1 RECONSTRUCTED 12/31/88.1
+
+       IF   DEBUG
+MEMTOP  EQU     >DFFE   BOTTOM (HIGHEST ADDRESS) OF STACK
+       ELSE
+MEMTOP EQU  >EFFE
+       FI
+*
+* THIS CAN CHANGE OUTSIDE OF DEBUG ENVIRONMENT
+
+NILV    EQU     0
+SDLEN   EQU     2    OFFSET OF CODE LENGTH VALUE IN DISK INFO REC
+ZERO    DATA    0
+ONE    DATA 1                 added 10/29/90 -pc
+SYSMAP  BSS     NUMPOL*8+8  CONTIGUOUS SPACE FOR ALL MEMORY MAPS
+        EVEN
+
+*  *  *  *  *
+       IF   DEBUG
+STHEAP  EQU     7       NUMBER OF PAGES TO BE MAPPED INTO STACK HEAP
+       ELSE
+STHEAP EQU  8
+       FI
+*
+*                       AREA DURING INITIAL BOOT; IN THIS CASE, 7 PAGES
+*                       (0000-DFFE)
+*  *  THIS MAY CHANGE WITH FINAL VERSION !!!
+
+
+MEMORY  DATA    7       LIBRARY FOR MEMORY MANAGMENT CALLS
+SYSBLK   BSS    2        BLOCK # OF SYSTEM.PASCAL
+
+* RELATIVE TO 'SYSCOM' (=SYSCMB) BY THE PASCAL SYSTEM AND MUST STAY IN THESE
+* FIXED RELATIVE LOCATIONS.
+*                  `
+
+SYSCMB
+IORSLT    DATA     0
+XEQERR    DATA     0
+SYSUNT    DATA     4
+BUGSTA    DATA     0
+GDIRP     DATA     0         * POINTER TO DIRECTORY ON STACK (NULL
+*                             BECAUSE NOT CURRENTLY READ DURING BOOT)
+          DATA     0,0
+
+*SYSCOM+14:
+FLTSEM    DATA     0,0       * semaphore for signalling fault handler
+FLTTIB    DATA     0         * ^TIB of faulting process
+FTEREC    DATA     0         * ^EREC of segment to leave in memory
+FTNWDS    DATA     0         * desired stack extension
+FLTNUM    DATA     0         * fault number
+SUBST     DATA     128       * subsidiary volume start unit number
+EXPSYS    DATA     0         * expanded address space system is false?
+       DATA 0,0,0,0,0,0       -pc 11/15/90
+
+*SYSCOM+42:
+TIMSTP    DATA     0         * time stamp for segment activity
+UNITPT    DATA     NILV      * pointer to unit table
+SUBMAX    BYTE      15        * max number of subsidiary units
+SERMAX    BYTE      2         * max number of serial units
+*         BSS       4
+       DATA 0                 -pc 11/15/90
+       DATA 8                 -pc 11/15/90 (9900 code PME...)
+
+MEMFLD    DATA     MEMINF     POINT TO MEMINFO
+
+*SYSCOM+54:
+*VERS      DATA     1          * version 4.1
+
+VERS      DATA     2          * version 4.2  -pc 11/15/90
+REALSZ    DATA     4          * real number word size
+MSCNFO    DATA     0
+CRTTYP    DATA     0
+CRTCTL    BYTE     >82        * HOME
+          BYTE     >00        * ESCAPE SEQUENCE NEEDED
+          BYTE     >99        * ERASE EOL
+          BYTE     >98        * ERASE EOS
+          BYTE     >89        * REVERSE LINE FEED
+          BYTE     >8A        * NONDESTRUCTIVE FS
+          BYTE     >00        * FILLCOUNT
+          BYTE     >88        * BACKSPACE
+          DATA     0,0        * EXPANSION
+
+*SYSCOM+74
+CRTNFO    DATA     >0018      * HEIGHT OF SCREEN
+          DATA     >0050      * WIDTH OF SCREEN
+* INPUT FROM CONSOLE (SOFT CHARACTERS, MODIFY AS NEEDED
+* FOR GENEVE)
+          BYTE     >8B        * CURSOR DOWN
+          BYTE     >89        * CURSOR UP
+          BYTE     >8A        * CURSOR RIGHT
+          BYTE     >88        * CURSOR LEFT
+FLUSH     BYTE     >94
+EOFF      BYTE     >03        * THE END-OF-FILE KEY
+STOP      BYTE     >93
+BRKCHR    BYTE     >9B
+BADCHR    BYTE     >3F
+CHRDEL    BYTE     >88
+ALTMOD    BYTE     >1B
+LINDEL    BYTE     >81
+ETX       BYTE     >0A0       * THE EDITOR 'ACCEPT' KEY
+PREFIX    BYTE      0
+ALPHLK    BYTE     >92
+CHRMSK    BYTE     >0FF       * CHARACTER MASK FOR CONSOLE INPUT
+          DATA     0          *SYSCOM+94
+
+* MARKS END OF SYSCOM
+SYSCME
+          EVEN
+
+MEMINF    DATA     6,0,0,0,0,0,0
+
+* END OF SYSCOM
+*
+*  TIB FOR THE MAIN TASK
+*
+ROOTSK    DATA     NILV
+          DATA     >0080    PRIORITY & FLAGS
+          DATA     SYSMSG    SP LOW
+          DATA     MEMTOP    SP UPR
+          DATA     0
+          DATA     0
+          DATA     0
+          DATA    -1
+          DATA     0
+          DATA     >0001   TIBIORSLT/PROCNUM
+          DATA     0
+          DATA     0
+*NOTE ASSUMING BIT 0 IS LEAST SIGNIFICANT  (PG 7-9)
+          DATA     >0003   MAINTASK/SYSTEM TASK BITS
+          DATA     SYSBAS
+
+GBLDAT
+SYSBAS     BSS      10   SYSTEM MSCW
+*
+
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+* * * * * * * * THIS IS THE END OF SYSTEM AS PRESERVED AFTER USERPROG
+* BEGINS TEMPORARY CODE USED BY BOOTSTRAP.  GLOBAL DATA AREA IS
+* ASSIGNED TO START HERE; SP_LOW (WORD 2) OF
+* ROOTSK (KERNEL TIB) FREES UP THE REST OF THIS AREA FOR HEAP.
+
+
+* * * * * * * * * * * * * * * * * * * * *
+
+* BOOT MESSAGES & LENGTHS
+SYSMSG  TEXT    'SYSTEM.PASCAL'
+        EVEN
+MSGLEN  EQU     13
+ERRMSG  TEXT    "CAN'T FIND SYSTEM.PASCAL"
+        EVEN
+MSGLN2  EQU     24
+
+SEGDCT    BSS       2   ^SEGMENT DICTIONARY DURING BOOT
+
+*********************************************************
+*ROUTINE TO CALL A STD PROC AND RETURN
+*TO CALLER INSTEAD OF FETCH LOOP
+
+*THIS IS A SPECIAL FUNCTION
+*NEEDED DURING INITIALIZATION ONLY
+
+*ACCESS BY  BL    @CALLSP
+
+*ENTRY: R5=ADDRESS OF ROUTINE BEING CALLED
+*       BK=STANDARD BK VALUE
+*       STACK PREPARED IN USUAL MANNER
+
+*EXIT:  BK RESTORED
+*       PROCEDURE EXECUTED
+
+        BSS     4
+CALLSP  MOV     BK,@CALLSP-2
+        MOV     R11,@CALLSP-4
+        LI      BK,CALLRT
+        B       *R5
+CALLRT  MOV     @CALLSP-2,BK
+        MOV     @CALLSP-4,R11
+        RT
+
+************************************************
+
+*USED DURING INITIALIZATION ONLY
+*       BL      @CLRUNT
+
+*ENTRY: R0=UNIT # TO CLEAR
+*EXIT: UNIT CLEARED
+
+        BSS     2
+CLRUNT  MOV     R11,@CLRUNT-2  SAVE RETURN
+        DECT    SP
+        MOV     R0,*SP  PUSH UNIT ON STACK
+        LI      R5,UCLEAR
+        BL      @CALLSP
+        MOV     @CLRUNT-2,R11
+        RT
+*************************************************
+
+*GENERAL STRING MATCHING ROUTINE
+*ENTRY: R0=COUNT
+*       R1=^STRING #1
+*       R2=^STRING #2
+*
+*EXIT:  R0=0 IF MATCH
+*          ELSE NO MATCH
+
+STRMCH  MOV     R0,R0
+        JEQ     STMCH1
+STMCH2  CB      *R1+,*R2+
+        JNE     STMCH1  TERMINATE
+        DEC     R0
+        JNE     STMCH2
+STMCH1  RT
+* * * * * * * * * * * * * *
+
+*THIS SHOULD EXIT BACK TO OPERATING SYSTEM
+MEMERR BLWP @0          CHANGE THIS TO APPROPRIATE MEMORY TRAP
+*
+H00    BYTE >00
+MAXLEN BYTE 80
+NINE   DATA 9
+*
+* system entry point
+*
+START   LI      SP,MEMTOP
+        LI      BK,BACK
+
+*ROUTINE TO GET MEMORY FROM SYSTEM
+*AND SET UP CODE POOLS
+
+        LI      R1,NUMPOL*8+8   TOTAL # OF 8K BLOCKS REQUIRED
+        LI      R2,0    STARTING WITH LOCAL PAGE 0
+        CLR     R3      STD SPEED PAGES  (DON'T BE GREEDY)
+        LI      R0,1    FETCH MEMORY OPCODE
+        XOP     @MEMORY,0
+        MOV     R0,R0   CHECK FOR ERROR
+        JNE     MEMERR
+        LI      R1,SYSMAP  MAP AREA
+        LI      R2,NUMPOL*8+8  SIZE OF MAP AREA
+        LI      R0,4    FETCH MEMORY MAP
+        XOP     @MEMORY,0
+
+*COPY THE APPROPRIATE PAGES FROM THE MAP AREA TO SYSTEM MAP
+        LI      R1,STHEAP     NUMBER OF BYTES TO SWAP
+        LI      R2,SYSMAP
+        LI      R3,>F110
+MPLP    MOVB    *R2+,*R3+
+        DEC     R1
+        JNE     MPLP
+*
+       LI   R1,ENDER
+       LI   R0,>6F7C
+PCDB00 MOV  R0,*R1+
+       CI   R1,MEMTOP
+       JL   PCDB00
+
+*STEP 3
+*INITIALIZE IO DEVICES
+*
+* get filename(s) from command line
+*
+       LI   R1,STRBF1
+       LI   R2,>FF00
+       MOVB R2,@-1(R1)
+*
+*      convert command args into string
+*
+*      IN:  R1 points to string buffer (byte after length byte)
+*           length byte must have max length of buffer
+*
+CMDSTR MOV  @>0128,R2         get pointer to command string
+       JEQ  NO#STR            zero length string
+       CB   @2(R2),@-1(R1)    compare lengths of strings
+       JL   LENOK             string too long for the buffer
+       MOVB @-1(R1),@2(R2)    just fill the buffer anyway
+*
+LENOK  MOV  R1,R5             cursor to caller's string buffer
+       DEC  R5
+       MOVB @2(R2),R6         count of chars to move
+       SRL  R6,8
+       INCT R6
+*
+NXTNOD MOV  R2,R3             cursor within node
+       INCT R3
+       MOV  R2,R4
+       AI   R4,8              pointer to end of node
+*
+NODL1  MOVB *R3+,*R5+
+       DEC  R6
+       JEQ  NODJ1
+       C    R3,R4
+       JL   NODL1
+       MOV  *R2,R2            this link never zero if valid string
+       JMP  NXTNOD
+*
+NODJ1  CLR  R0
+       JMP  NODRET
+*
+NO#STR CLR  R0
+       MOVB R0,@-1(R1)
+       MOVB R0,*R1
+       JMP  NODRET
+*
+NODRET MOVB @-1(R1),R0
+       JEQ  NOFILE            is there a command string?
+*
+       CLR  R4                unit number
+       LI   R5,NAMBUF         start of name buffer
+*
+PARSE0 MOV  R5,R2             next name buffer
+*
+       LI   R0,8
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0           parse a potential filename
+       JNE  NOFILE            parse error---issue usage message
+*
+       MOVB *R5,R2
+       JEQ  NOFILE
+*
+       SRL  R2,8
+       INCT R2                length of name string
+*
+       MOV  R4,R6
+       CI   R6,4
+       JL   PARSE1
+*
+       AI   R6,6
+*
+PARSE1 AI   R6,DSKNO
+*
+       MOV  R5,*R6
+*
+       A    R2,R5             next buffer location
+*
+       INCT R4
+       CI   R4,18
+       JHE  NOFILE            last possible unit used...
+*
+       MOV  R0,R1
+       CB   *R1,@H00
+       JEQ  NOFILE            not enough info!
+       INC  R1                skip the delimiter
+       JMP  PARSE0
+*
+NOFILE  LI      R0,1    CONSOLE
+        BL      @CLRUNT
+        LI      R0,4    DSK DRIVE
+*       BL      @CLRUNT
+
+*FIX THIS UP LATER
+*THESE TWO XOP ROUTINES SEEM TO LOCK UP
+        LI      R0,6    PRINTER
+*       BL      @CLRUNT
+        LI      R0,7    REMOTE
+*       BL      @CLRUNT
+
+*STEP 4 READ DIRECTORY
+        AI      SP,-2048 SPACE FOR DIRECTORY
+        MOV     SP,R15   EXTRA COPY
+        MOV     SP,@GDIRP  SAVE PTR TO DIRECTORY
+        AI      SP,-12
+        CLR     *SP     CONTROL WORD
+        LI      R0,2    LOGICAL BLOCK #
+        MOV     R0,@2(SP)
+        LI      R0,2048 BYTE COUNT
+        MOV     R0,@4(SP)
+        CLR     @6(SP)   BYTE OFFSET
+        MOV     R15,@8(SP)  BYTE BASE
+        LI      R0,4     UNIT NUMBER
+        MOV     R0,@10(SP)
+        LI      R5,UNITRD
+        BL      @CALLSP
+        MOV     @IORSLT,@IORSLT
+        JEQ     ST22    NO ERROR
+        B       @EXIT   TROUBLE
+
+*STEP 5 FLIP DIRECTORY
+ST22    MOV     @GDIRP,R1
+        MOVB    @3(R1),@3(R1) CHECK SEX BYTE
+        JNE     ST18A   NO NEED TO FLIP
+*FLIP FIRST ENTRY
+        SWPB    *R1
+        SWPB    @2(R1)
+        SWPB    @4(R1)
+        SWPB    @14(R1)
+        SWPB    @16(R1)
+        SWPB    @18(R1)
+        SWPB    @20(R1)
+        MOV     @16(R1),R2    # OF ENTRIES IN DIRECTORY
+        AI      R1,26   ^FIRST ENTRY TO FLIP
+*FLIP THE REST
+*WORD 0-2; 11-12 OF EACH RECORD
+ST19    SWPB    *R1
+        SWPB    @2(R1)
+        SWPB    @4(R1)
+        SWPB    @22(R1)
+        SWPB    @24(R1)
+        AI      R1,26   TO NEXT ENTRY
+        DEC     R2
+        JNE     ST19    MORE TO GO
+
+*STEP 6A FIND SYSTEM.PASCAL
+ST18A   MOV     @GDIRP,R15
+        MOV     @16(R15),R5    NUMBER OF VALID ENTRIES
+        AI      R15,6   OFFSET TO START OF NAME
+ST20    AI      R15,26  PAST FIRST BLOCK
+        MOV     R15,R1  WORKING COPY
+        INC     R1      ^PAST COUNT BYTE
+        LI      R0,MSGLEN
+        LI      R2,SYSMSG
+        BL      @STRMCH
+        MOV     R0,R0   MATCH?
+        JEQ     ST21    YES
+        DEC     R5
+        JNE     ST20
+
+*END UP HERE IF CAN'T FIND
+EXIT    AI      SP,12
+        MOV     SP,R4
+        CLR     *R4+   CONTROL
+        CLR     *R4+    BLOCK NUMBER
+        LI      R1,MSGLN2
+        MOV     R1,*R4+ LENGTH
+        CLR     *R4+ BYTE OFFSET
+        LI      R1,ERRMSG MSG TO PRINT
+        MOV     R1,*R4+
+        LI      R1,1    CONSOLE
+        MOV     R1,*R4+
+        LI      R5,UNITWT
+        BL      @CALLSP
+        B       @MEMERR NEVER RETURN
+
+ST21    MOV     @-6(R15),@SYSBLK             BLOCK NUMBER OF SYSTEM
+
+
+*READ SEGMENT DICTIONARY
+        AI      SP,-SEGDSZ  SEGMENT DICTIONARY SIZE
+        MOV     SP,@SEGDCT    POINTER TO SEGMENT DICTIONARY
+ST18    AI      SP,-12  CLEAR FOR 6 WORDS
+        MOV     SP,R4   EXTRA COPY
+*                       LOAD STACK IN REVERSE ORDER
+        CLR     *R4+    CONTROL WORD
+        MOV     @SYSBLK,*R4+  DISK BLOCK # TO STACK
+        LI      R0,SEGDSZ
+        MOV     R0,*R4+  SEGMENT DICTIONARY SIZE
+        CLR     *R4+    BYTE OFFSET
+        MOV     @SEGDCT,*R4+  DESTINATION
+        MOV     @SYSUNT,*R4+ SYSTEM UNIT (NORMALLY 4)
+        LI      R5,UNITRD
+        BL      @CALLSP  DICTIONARY LOADED
+        MOV     @IORSLT,@IORSLT
+        JEQ     ST23
+        B       @EXIT     TROUBLE
+
+* FLIP IT IF NECESSARY.
+ST23       MOV      @SEGDCT,R1   R1=^START OF SEGMENT DICTIONARY
+
+*STEP 7
+           C        @510(R1),@ONE     CHECK BYTE SEX WORD
+           JEQ      ST12
+*
+       MOV  R1,R5             save segdct
+*
+           LI       R2,32     FLIP FIRST 32 WORDS
+           BL       @ST13
+*
+* flip WD 96-215, but...
+* do not flip character arrays in WD 144-215 (depends on segment type)
+* -pc 11/15/90
+*
+*          LI       R2,120    PREPARE TO FLIP WD 96-215
+*          AI       R1,128    R1=^WORD 96
+*          BL       @ST13
+*
+       MOV  R5,R1
+       AI   R1,192
+       MOV  R1,R4             syscom^.seg_misc
+       LI   R2,48
+       BL   @ST13             flip WD 96-143
+*
+       MOV  R5,R4
+       AI   R4,192            point to segment desc array.
+*
+* do this once for each possible segment entry.
+*
+       LI   R3,16
+*
+ST7A   MOV  *R4+,R0
+       ANDI R0,>0007          mask for segment type in packed array
+       JEQ  ST7A90
+*
+       CI   R0,3              proc_seg ... implies character array
+       JEQ  ST7A90
+       CI   R0,4              seprt_seg ... implies character array
+       JEQ  ST7A90
+*
+       SWPB *R1+              0
+       SWPB *R1+              2
+       SWPB *R1+              4
+       SWPB *R1+              6
+       JMP  ST7A91
+*
+ST7A90 AI   R1,8              skip to next entry...no swapping needed
+ST7A91 DEC  R3
+       JNE  ST7A
+*
+       LI   R2,8
+       BL   @ST13
+*
+           SWPB     @510(R5)   FLIP WORD 255
+           JMP      ST12
+
+
+*THIS IS ROUTINE THAT DOES FLIPPING
+*ENTRY:    R1=^TO START WORD
+*          R2=# WORDS TO FLIP
+ST13       SWPB     *R1+
+           DEC      R2
+           JNE      ST13
+           RT
+
+
+*STEP 8  LOAD USERPROG
+ST12       MOV      @SEGDCT,R3
+           MOV      @62(R3),R3     WORD LENGTH OF USERPROG
+           SLA      R3,1           BYTE SIZE (SAVE FOR BELOW)
+           S        R3,SP          ALLOCATE SPACE ON STACK
+
+       ANDI SP,>FFE0
+       MOV  SP,CURSEG
+
+*SET UP STACK FOR READ  (WRITTEN IN REVERSE ORDER)
+           AI       SP,-12         ALLOCATE 6 WORDS
+           MOV      SP,R4          EXTRA COPY
+           CLR      *R4+           CONTROL WORD
+           MOV      @SEGDCT,R1     BASE OF SEGMENT DICTIONARY
+           AI       R1,60          WORD 30=REL BLOCK # OF USEG
+           MOV      *R1+,*R4
+           A        @SYSBLK,*R4+   ABSOLUTE BLOCK #
+           MOV      R3,*R4+        NUMBER OF BYTES TO READ
+           CLR      *R4+
+           MOV      CURSEG,*R4+    DISK READ DESTINATION BASE
+           MOV      @SYSUNT,*R4    SYSTEM DISK #
+
+           LI       R5,UNITRD       UNIT READ
+           BL       @CALLSP
+           MOV      @IORSLT,@IORSLT
+           JEQ      ST24      SUCCESSFUL READ
+           B        @EXIT
+
+ST24       C        @12(CURSEG),@ONE  CHECK SEX
+           JEQ      ST17
+
+*STEP 9 FLIP USERPROG
+*                                  * NO - FLIP IT AS WE SET IPC
+       SWPB *CURSEG
+       SWPB @2(CURSEG)
+       SWPB @14(CURSEG)
+       SWPB @16(CURSEG)
+       SWPB @18(CURSEG)
+       SWPB @20(CURSEG)
+*
+       MOV  *CURSEG,R3
+       SLA  R3,1
+       MOV  R3,@SEGHI
+*
+           A        CURSEG,R3      * ... NOW ABSOLUTE
+           SWPB     *R3            * FLIP NUMBER OF PROCEDURES
+           MOV      *R3,R2         * SAVE NUMBER OF PROCEDURES
+ST16       DECT     R3             * LOOP THROUGH PROCEDURE DICTIONARY
+           SWPB     *R3            * FLIP POINTER TO PROCEDURE
+           MOV      *R3,R4         * GET RELATIVE WORD PTR TO PROCEDURE ...
+           SLA      R4,1           * ... NOW BYTES
+           A        CURSEG,R4         * ... NOW ABSOLUTE
+           SWPB     *R4            * FLIP DATASIZE
+           DECT     R4
+           SWPB     *R4            * FLIP EXITIC
+           DEC      R2             * R2>0 MEANS MORE PROCEDURES TO GO
+           JGT      ST16
+
+ST17       MOV      @14(CURSEG),R3     CONSTANT POOL OFFSET
+           SLA      R3,1           NOW BYTES
+           MOV      R3,@CPOFST
+           A        CURSEG,R3     LO WORD ADDRESS OF CONSTANT POOL
+           MOV      R3,@CPOOL
+*
+           MOV      @SEGHI,R3
+           DECT     R3
+       A    CURSEG,R3
+           MOV      *R3,R2         * GET RELATIVE WORD PTR TO PROCEDURE 1 ...
+           SLA      R2,1           * ... NOW BYTES
+           INCT     R2             * MOVE PAST DATASIZE TO CODE
+           MOV      R2,IPC
+
+*STEP 10 BUILD MEMINFO
+*  MODIFIED 1/31/88 FOR LONG ADDRESSING
+           LI       R1,ROOTSK  CURRENT TASK TIB
+           MOV      R1,@CURTSK  CURRENT TASK REGISTER
+           MOV      R1,@READYQ
+           LI       R1,6
+           MOV      R1,@MEMINF     # WORDS
+           CLR      @MEMINF+2
+           CLR      @MEMINF+4
+           LI       R1,NUMPOL*128  # OF 256-WORD BLOCKS OF POOL MEM
+           MOV      R1,@MEMINF+12  FREESPACE.SIZE FIELD
+           LI       R1,>0001       HIWORD OF POOL AREA START
+           MOV      R1,@MEMINF+8   FREESPACE.FULLADDRESS(1)
+           CLR      @MEMINF+10     LOWORD
+
+*STEP 11 BUILD A TIB---TIB IS ESTABLSHED THROUGH DATA STATEMENTS
+
+*STEP 12 BUILD KERNAL GLOBALS
+           MOV      @SEGDCT,R1
+           MOV      @288(R1),R1    WORD 144 OF SEGDICT IS DATA SIZE
+*                                  OF KERNEL
+           SLA      R1,1           BYTE COUNT
+           AI       R1,SYSBAS+10   ^ABOVE SYSTEM MSCW
+           MOV      R1,@ROOTSK+4   ROOTSK.SP_LOW=BASE+DATASIZE+5
+           LI       R1,SYSBAS
+           MOV      R1,@BASE       INIT BASE REGISTER
+           MOV      R1,R2          MSCW FIELD PTR
+           MOV      R1,*R2         MSSTAT
+           MOV      R1,@MSDYN(R2)
+           CLR      @MSENV(R2)
+           MOV      @ONE,@MSPROC(R2)
+           LI       R1,SYSCMB
+           MOV      R1,@10(R2)     1ST DATA WORD=^SYSCMB
+
+*STEP 13 BUILD ENVIRONMENT
+
+           AI       SP,-52         ALLOCATE
+*SET MACHINE REGISTERS
+*BUILD EVEC AT SP
+           MOV      SP,@EVEC
+*FIX UP EVEC
+           LI       R1,2           VECTOR LENGTH
+           MOV      R1,*SP
+           CLR      @2(SP)
+           MOV      SP,R1
+           AI       R1,6        ^EREC
+           MOV      R1,@4(SP)
+
+*SET UP EREC AT SP+6
+           MOV      R1,@EREC
+           LI       R0,SYSBAS
+           MOV      R0,*R1         ENVDATA FIELD
+           MOV      SP,@ENVVEC(R1)
+           MOV      R1,R0
+           AI       R0,10          ^SIB
+           MOV      R0,@ENVSIB(R1)  ENVEC
+           CLR      @ENVLNK(R1)
+           CLR      @ENVLST(R1)
+
+           AI       R1,10
+           MOV      R1,@SIB        R1=^CURRENT SIB
+           MOV      @SEGDCT,R5     R5=^SEGMENT DICTIONARY
+
+           CLR      *R1            POOL POINTER FIELD=0
+*                                  INDICATES SEGMENT IN HEAP
+           MOV      CURSEG,R2
+           MOV      R2,@SEGBAS(R1)
+           MOV      @ONE,@SEGREF(R1)
+           CLR      @SGTMPS(R1)   TIMESTAMP
+           CLR      @SEGPCS(R1)   THIS DIFFERS FROM TXINIT CODE HOWEVER
+*                                 IT AGREES MORE CLOSELY WITH PG 2-30
+           CLR      @SEGRES(R1)
+           CLR      @SEGNAM(R1)   8 CHARACTERS LONG
+           CLR      @SEGNAM+2(R1)
+           CLR      @SEGNAM+4(R1)
+           CLR      @SEGNAM+6(R1)
+           MOV      @62(R5),@SEGLEN(R1)
+           MOV      @60(R5),@SEGADD(R1)  REL BLOCK ADDRESS ON DISK
+           A        @SYSBLK,@SEGADD(R1)  MAKE RELATIVE BLOCK OFFSET ABSOLUTE
+           CLR      @SEGUNT(R1)
+           CLR      @SEGDAT(R1)
+           CLR      @SEGPRE(R1)
+           CLR      @SEGNXT(R1)
+           CLR      @NXTSRT(R1)
+           CLR      @SGMTYP(R1)
+
+*STEP 14 BUILD MSCW
+*  BUILD MSCW FOR SEGMENT 16 (USERPROG), PROCEDURE 1 ON THE STACK AND SET MP.
+
+           AI       SP,-MSCWSZ     * OPEN UP ROOM ON STACK FOR MSCW
+           MOV      SP,MP          * INITIALIZE MP AT THIS MSCW
+           MOV      @BASE,@MSSTAT(SP)
+           MOV      @BASE,@MSDYN(SP)
+           MOV      IPC,@MSIPC(SP)
+           MOV      @EREC,@MSENV(SP)
+           MOV      @ONE,@MSPROC(SP)
+           MOV      SP,@ROOTSK+8       TIB.REGS.SP
+           MOV      SP,@ROOTSK+10      TIB.REGS.MP
+
+*STEP 15 INITIALIZE REGISTERS
+*OTHER REGS HAVE ALREADY BEEN SET
+           CLR      @CURPOL     CURRENT POOL IS HEAP/STACK
+           MOV      @ONE,@CURPRO   PROCEDURE 1
+           MOV      IPC,@ROOTSK+14 CURTASK^.REGS.IPC
+           MOV      IPC,@SYSBAS+4  GLOBAL DATA MSCW
+
+*STEP 16 START PME
+           B        @BACK
+*
+ENDER  DATA 0
+

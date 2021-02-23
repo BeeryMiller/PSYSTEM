@@ -1,0 +1,39 @@
+PSYSTEM RELEASE NOTES FOR MYARC.
+
+
+Invocation:
+
+PSYSTEM v4 v5 v9 v10 v11 v12
+
+ The volume names after the psystem command are file names of any file
+ in your filesystem, dedicated psystem disks can be referred to as
+ "DSKn."  Volume names are optional, but if present, they are processed
+ in order from left to right, assigned the psystem volume name indicated
+ above.  The defaults, if no names are given is the same as typing:
+
+ PSYSTEM DSK1. DSK2. DSK3. DSK4. DSK5.
+
+ To invoke a psystem volume on your hard drive you could use the following
+ command line:
+
+ PSYSTEM HDS1.SUBDIR.VOL_FILE
+
+To create new psystem volumes on the MYARC file system, use the
+TI-BASIC program "MKVOL", it will create a file anywhere on an HFDC
+or floppy disk.  Once the file is created, you must start up the psystem
+With the filename as one of the command line arguments.
+
+The file won't be usable until you enter the psystem filer utility and
+(Z)ero the volume.
+
+
+Other notes: if a psystem volume completely fills a diskette, and it was
+Created with the MKVOL utility, you can transfer it via modem to another
+Computer.  The orignal psystem diskettes are DSSD.
+
+The DISKCOPY command of MDOS is the suggested method of copy psystem diskettes
+
+
+Whatnever.
+
+

@@ -1,0 +1,57 @@
+*
+* move sectors to account for file xfr offset.
+* MOVE SRC DEST
+*
+       LI   R6,>0026
+       LI   R7,>0004
+*
+MOV10  CI   R6,>05A0
+       JHE  MOV99
+*
+       MOV  R6,@PAB1+6
+       MOV  R7,@PAB2+6
+*
+* bread
+*
+       MOV  @BUFADR,@PAB1+4
+       MOV  @BUFLEN,@PAB1+12
+       LI   R0,PAB1
+       XOP  @EIGHT,0
+*
+* bwrite
+*
+       MOV  @BUFADR,@PAB2+4
+       MOV  @BUFLEN,@PAB2+12
+       LI   R0,PAB2
+       XOP  @EIGHT,0
+*
+       AI   R6,BUFSEC
+       AI   R7,BUFSEC
+       JMP  MOV10
+*
+MOV99  BLWP @0
+*
+EIGHT  DATA 8
+*
+PAB1   DATA >0A00
+       DATA 0
+       DATA BUFFER
+       DATA 0
+       DATA 0,0,1,>0005
+       TEXT 'DSK5.'
+*
+PAB2   DATA >0B00
+       DATA 0
+       DATA BUFFER
+       DATA 0
+       DATA 0,0,1,>0005
+       TEXT 'DSK1.'
+*
+BUFSEC EQU  8
+BUFLEN DATA BUFSEC
+BUFADR DATA BUFFER
+*
+BUFFER BSS  BUFSEC*256
+*
+       END
+*

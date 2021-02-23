@@ -1,0 +1,346 @@
+*PME2A 10/22/88.2
+
+*GENERATES SIGNED RESULT
+* THIS MAY NOT BE CORRECT; MPI IS NOT SIGNED
+* (LOU 10/88)
+DVI     DATA    2+$
+        MOV     *SP+,R3 NUMERATOR
+        JEQ     DIVERR
+        CLR     R0      ASSUME POS
+        MOV     *SP,R1  DENOMINATOR
+        JEQ     DVI2    0 DENOMINATOR
+        JGT     DVI1    IF POSITIVE
+        SETO    R0      NEG
+DVI1    DATA    >0183   DIVS  R3
+DVI2    MOV     R0,*SP
+        B       *BK
+
+DIVERR  BL      @TRAPER
+        DATA    DIVZER
+
+MPI     DATA    2+$
+        MOV     *SP+,R1
+        MPY     *SP,R1
+        MOV     R2,*SP  PUSH RESULT
+        B       *BK
+
+CCHK    DATA    2+$
+        MOV     *SP+,R1 MAX INDEX
+        MOV     *SP+,R2 MIN INDEX
+        C       *SP,R1  >MAX?
+        JGT     CCHK0
+        C       *SP,R2  <MIN?
+        JLT     CCHK0
+        B       *BK
+
+CCHK0   BL      @TRAPER
+        DATA    INVNDX
+*COMPARISON OPERATIONS
+**************************STRING COMPARISON
+
+*COMPARE 5/22/88.5
+
+*BYTCMP MOVE BYTES FROM ONE LONG ADDRESS TO ANOTHER
+*ENTRY: R1=BYTE COUNT
+*       R4=STR1 HI WORD
+*       R5=STR1 LO WORD
+*       R6=STR2 HI WORD
+*       R7=STR2 LO WORD
+
+*EXIT:  R0=FLAG
+*       +1 IF STR1>STR2
+*        0 IF STR1=STR2
+*       -1 IF STR1<STR2
+*   OTHER CALLING REGS UNDISTURBED
+
+*CALL  BLWP     @BYTCMP
+
+BYTCMP  DATA    WKSP2,BYTC1
+BYTC1   MOV     @2(R13),R12   BYTE COUNT
+
+        MOV     @12(R13),R9   STR2
+        MOV     @14(R13),R10  STR2
+        MOV     @8(R13),R7    STR1
+        MOV     @10(R13),R8   STR1
+        CLR     R0
+
+*  SET UP SOURCE
+        MOV     R10,R2        EXTRA COPY
+        ANDI    R10,MASK8K    INDEX VALUE
+        SRL     R2,13    SAVE 3 HI BITS
+        SLA     R9,3
+        A       R2,R9   R9=MAP INDEX FOR SOURCE
+
+*  SET UP DEST
+        MOV     R8,R2        EXTRA COPY
+        ANDI    R8,MASK8K    INDEX VALUE
+        SRL     R2,13    SAVE 3 HI BITS
+        SLA     R7,3
+        A       R2,R7   R7=MAP INDEX FOR DEST
+
+* LOAD MAP
+        MOVB    @SYSMAP(R7),@>F113  DEST IN >6000 BLOCK
+        MOVB    @SYSMAP(R9),@>F112  SOURCE IN >4000 BLOCK
+
+BYTC4   CB      @>4000(R10),@>6000(R8)  COMPARE (R4),(R6)
+*                (STR2)       (STR1)
+        JEQ     BYTC5   STR1=STR2, KEEP CHECKING
+        JL      BYTC6
+        SETO    R0    STR2>STR1
+        JMP     BYTC11  END
+
+BYTC6   LI      R0,1  STR1<STR2
+        JMP     BYTC11  END
+*           *  *  *
+
+BYTC5   INC     R8
+        CI      R8,>6000  CHECK DEST FOR OVERRUN
+        JNE     BYTC2   NO CARRY
+        INC     R7
+        CLR     R8    BACK TO BEGINNING OF BLOCK
+        MOVB    @SYSMAP(R7),@>F112
+
+BYTC2   INC     R10
+        CI      R10,>4000  CHECK SOURCE FOR OVERRUN
+        JNE     BYTC3   NO CARRY
+        INC     R9
+        CLR     R10   BEGINNING OF BLOCK
+        MOVB    @SYSMAP(R9),@>F113
+
+BYTC3   DEC     R12  BYTE COUNTER
+        JNE     BYTC4   MORE TO GO
+        JMP     BYTC11  CLEAN UP & GO HOME
+
+*RESTORE MEMORY MAP
+BYTC11  LI      R2,2    NECESSARY BECAUSE ASSEMBLER CAN'T EVALUATE
+*                       EXPRESSION INVOLVING REF VALUE
+        MOVB    @SYSMAP(R2),@>F112
+        INC     R2
+        MOVB    @SYSMAP(R2),@>F113
+        MOV     R0,*R13      RETURN VALUE IN CALLERS R0
+        RTWP
+
+* DETERMINES LONG ADDRESSES AND LENGTHS FOR
+* BOTH STRINGS BEING COMPARED
+*
+*ENTRY: R4=UB1  ADDRESS FLAG FOR TOS (STR1)
+*       R3=UB2  ADDRESS FLAG FOR TOS-1 (STR2)
+*       (EXACTLY AS FETCHED FROM GET2)
+*       ADDRESSES/OFFSETS ON STACK
+
+*EXIT:  R1=LENGTH OF STR1  (VAL OF FIRST BYTE)
+*       R2=LENGTH OF STR2  (VAL OF FIRST BYTE)
+*       R4,5=LONG ADDRESS FOR STR 1
+*       R6,7=LONG ADDRESS FOR STR 2
+*       STACK CLEANED UP
+
+        BSS     4
+STRADR  MOV     R11,@STRADR-2
+        MOV     R4,R4
+        JEQ     STAD2
+
+*IF STR1 IS IN CURRENT SEGMENT...
+        MOV     @CURPOL,R6    HIWORD OF ADDRESS
+        MOV     *SP+,R7       OFFSET
+        A       CURSEG,R7     LOWORD OF ADDRESS
+        BL      @GETBTE       GET LENGTH BYTE
+        SWPB    R15
+        MOV     R15,@STRADR-4  HOLD ONTO IT
+        MOV     R7,R5
+        MOV     R6,R4         PUT STUFF WHERE IT BELONGS
+        JMP     STAD3
+
+* IF STR1 IS IN STACK HEAP AREA...
+STAD2   CLR     R4
+        MOV     *SP+,R5      SIMPLE ADDRESS
+        CLR     R15
+        MOVB    *R5,R15      LENGTH BYTE
+        SWPB    R15
+        MOV     R15,@STRADR-4
+
+STAD3   MOV     R3,R3
+        JEQ     STAD4
+
+* IF STR2 IS IN SEGMENT...
+        MOV     @CURPOL,R6    HIWORD OF ADDRESS
+        MOV     *SP+,R7       OFFSET
+        A       CURSEG,R7     LOWORD OF ADDRESS
+        BL      @GETBTE
+        SWPB    R15
+        MOV     R15,R2
+        JMP     STAD5
+
+* IF STR2 IS IN STACK/HEAP...
+STAD4   CLR     R6
+        MOV     *SP+,R7       IN STACK HEAP AREA
+        CLR     R2
+        MOVB    *R7,R2  GET LENGTH BYTE
+        SWPB    R2
+
+STAD5   MOV     @STRADR-4,R1   LEN OF STR1
+        MOV     @STRADR-2,R11  RETURN
+        RT
+
+* ENTRY:        R1=LEN STR1
+*               R2=LEN STR2
+
+* STORES NUMBER OF SHORTER STRING @GESTR-2
+* THIS CAN BE LATER USED IN CASE BYTCMP RETURNS
+* A TIE
+
+* EXIT:         R1=COUNT OF SHORTER LENGHT
+*               R15 ALTERED
+SHTSTR  BSS     2       # OF SHORTER STRING OR
+*                       0 IF EQUAL LENGTH
+
+* COMPARE AND SAVE LENGTHS
+FNDSHT  C       R1,R2
+        JEQ     FNDS2
+        JGT     FNDS1   R1>R2
+
+* IF R1 IS SHORTER
+        LI      R15,1
+        MOV     R15,@SHTSTR    SAVE SHORTER STRING ID
+        RT
+
+* IF R2 IS SHORTER
+FNDS1   MOV     R2,R1   COUNT OF SHORTER STRING
+        LI      R15,2
+        MOV     R15,@SHTSTR   ID OF SHORTER STRING
+        RT
+
+* IF BOTH STRINGS ARE EQUAL LENGTH
+FNDS2   CLR     @SHTSTR
+        RT
+
+FNDS3   MOV     R15,R1  USE THIS COUNT
+        RT
+
+EQSTR   DATA    GET2
+        AI      R1,-464
+        MOV     @JTOKN1(R1),@JVECT
+        BL      @STRADR
+        C       R1,R2   CHECK LENGTHS
+        JEQ     GEST1   EQUAL LENGTS
+        B       @PUTFLS
+
+LESTR
+GESTR   DATA    GET2
+        AI      R1,-464
+        MOV     @JTOKN1(R1),@JVECT
+        BL      @STRADR GET STRING ADDRESSES
+        BL      @FNDSHT FIND SHORTER STRING
+GEST1   INC     R1      LENGTH BYTE
+        BLWP    @BYTCMP
+        MOV     R0,R0   TEST FLAG
+
+* USE  (COND) JUMP  4+$ FOR FALSE CONDITION
+JVECT   BSS     2       APPROPRIATE JUMP VECTOR GOES HERE
+        B       @PUTTRU
+        B       @PUTFLS
+
+* FOR USE BY SELF MODIFYING CODE:
+* STRING COMPARISONS
+JTOKN1  JNE     6+$
+        JLT     6+$
+        JGT     6+$
+
+* SIGNED AND UNSIGNED
+* INTEGER COMPARISONS
+JTOKN2  JNE     6+$
+        JEQ     6+$
+        JGT     6+$
+        JLT     6+$
+        JH      6+$
+        JL      6+$
+
+PUTTRU  DECT    SP
+        LI      R1,1
+        MOV     R1,*SP
+        B       *BK
+
+PUTFLS  DECT    SP
+        CLR     *SP
+        B       *BK
+
+        BSS     2
+EQBYT
+GEBYT
+LEBYT   DATA    GETBG2
+        AI      R1,-370
+        MOV     @JTOKN1(R1),@JVECT  SELECT COMPARISON OPER
+        MOV     R3,@EQBYT-2   BYTE COUNT
+        MOV     R4,R3   UB2
+        MOV     R5,R4   UB1
+        BL      @STRADR
+        MOV     @EQBYT-2,R1   THIS IS COUNT TO USE
+        BLWP    @BYTCMP
+        MOV     R0,R0
+        B       @JVECT
+
+
+***************INTEGER COMPARISON
+EQUI
+NEQI
+LEQI
+GEQI
+LEQU
+GEQU    DATA    2+$
+        AI      R1,-352 NORMALIZE INSTRUCTION
+        MOV     @JTOKN2(R1),@JVECT
+        MOV     SP,R1   COPY STACK POINTER
+        AI      SP,4    POINT PAST ARGS
+        C       @2(R1),*R1   CMPR TOS-1\TOS
+        B       @JVECT
+
+*ASSIGN STRING
+*  REWRITTEN 5/19/88
+*  ASSUMES THAT OFFSET IS BYTE OFFSET;
+*  NOT CLEAR IN BOOK; COMPARE LCO OPCODE
+
+ASTR    DATA    GET2
+        MOV     IPC,@IPCFLT
+        DECT    @IPCFLT
+        DEC     @IPCFLT
+        MOV     *SP+,R1  SOURCE ADDR/OFF
+        MOV     *SP+,R2 DEST ADDR
+        MOV     R4,R4   IN CPU RAM?
+        JEQ     ASTR5   YES, PROCEED
+
+       MOV  @CURPOL,R6 HIWORD OF SEG ADDR
+       MOV  CURSEG,R7
+       BL   @LNGADD
+       JMP  ASTR4
+
+ASTR5   CLR     R6
+        MOV     R1,R7
+ASTR4   BL      @GETBTE GET SIZE BYTE
+        SWPB    R15     DYNAMIC SIZE OF STRING
+        C       R15,R3  COMPARE LENGTHS
+        JGT     ASTR3   NG
+
+        MOV     R15,R1
+        INC     R1      INCLUDE SIZE BYTE
+        CLR     R4      DEST HIWORD
+        MOV     R2,R5
+        BLWP    @LNGMOV
+        B       *BK
+
+ASTR3   BL      @TRAPER    TROUBLE!
+        DATA    S2LONG
+
+*CHECK STRING INDEX
+CSTR    DATA    2+$
+        MOV     *SP,R2  VALUE OF INDEX
+        MOV     @2(SP),R1 ADDR OF STR
+        CLR     R3
+        MOVB    *R1,R3
+        SWPB    R3      LEN OF STR
+        CI      R2,1    IND<1?
+        JLT     CS1     NG
+        C       R2,R3   IND>LEN?
+        JGT     CS1     NG
+        B       *BK     OK!
+
+CS1     BL      @TRAPER NOT SO GOOD
+        DATA    INVNDX

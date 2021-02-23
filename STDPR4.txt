@@ -1,0 +1,212 @@
+*STDPR4 6/14/89.1
+*FINISH SIGNAL ETC.
+
+**********CONCURRENCY ROUTINES*********
+
+QTFLAG  DATA    0       FLAG FOR QUIET STATUS
+QUIET   SETO    @QTFLAG  DISABLE INTERRUPTS
+        B       *BK
+
+ENABLE  CLR     @QTFLAG
+        B       *BK
+
+MXEVNT EQU  63                -pc 1/13/91
+EVENTS BSS  (MXEVNT+1)*2      -pc 1/13/91
+
+ATTACH  MOV     *SP+,R1 EVENT #
+       CI   R1,MXEVNT
+       JH   ATTAC9
+        MOV     *SP+,R2 SEM PTR
+        SLA     R1,1    BYTE OFFSET
+       SETO @QTFLAG
+       MOV  R2,@EVENTS(R1)    SEM ADDR
+       CLR  @QTFLAG
+ATTAC9 B    *BK
+
+WAIT    DATA    $+2
+        MOV     *SP+,R1 SEM ADDR
+       SETO @QTFLAG
+        MOV     *R1,*R1 SEM COUNT
+       JGT  WAIT1
+*
+        BL      @DELINK REMOVE CURTASK FROM READYQ
+       MOV  @2(R1),R4         ^TIB.WAITQ
+        MOV     @CURTSK,R5
+*
+        BL      @ENQUE  PLACE CURTASK ON WAITQ
+        MOV     R4,@2(R1) RESET WAITQ HEAD
+        MOV     @CURTSK,R2
+        MOV     R1,@TIBHNG(R2) HANG PTR
+        LI      BK,TSKSCH    ALTER RETURN VECTOR
+        JMP     WAIT2
+
+WAIT1   DEC     *R1     DEC SEM COUNT
+WAIT2  CLR  @QTFLAG
+        B       *BK
+
+*TASKSWITCH ROUTINE CALLED WHEN BACK IS MODIFIED
+*ENTRY:  R5=^NEW TIB
+
+TSKSCH  BL      @SAVREG SAVE CURTASK
+       SETO @QTFLAG
+        LI      BK,BACK BACK TO NORMAL OPERATION
+        MOV     @READYQ,@CURTSK NEXT READY TASK
+       CLR  @QTFLAG
+        BL      @RESTOR
+        B       *BK
+
+*PARAMETER IN R9
+        BSS     2       RET ADDR
+EVENT   MOV     R9,R1   COPY EVENT #
+       CI   R1,MXEVNT
+       JH   EVENT1
+        SLA     R1,1    BYTE OFFSET
+       MOV  @EVENTS(R1),R1
+        JEQ     EVENT1  IF NIL THEN...
+*
+        MOV     R11,@EVENT-2
+        BL      @SIG    SIGNAL R1
+        MOV     @EVENT-2,R11
+EVENT1  RT
+
+*DOES A SIGNAL ON A SEMAPHORE
+*OPCODE FORM
+SIGNAL  DATA    $+2
+        MOV     *SP+,R1 POP SEM ADDR
+       SETO @QTFLAG
+        BL      @SIG
+       CLR  @QTFLAG
+SGN2    B       *BK
+
+*WORKING PART, EXPECTS SEM ADDR IN R1
+*BASED ON TI CODE
+        BSS     2
+SIG     MOV     @2(R1),R4 R4 := ^TIB.WAITQ
+        JEQ     SIG2    NO ASSOCIATED TIB---DO NOTHING
+
+        MOV     *R1,*R1 CHECK SEM_COUNT
+        JLT     SIG2    IF CNT<0 THEN INCREMENT & GO HOME
+*
+        MOV     R11,@SIG-2
+       BL   @DEQUE
+       MOV  R4,@2(R1)
+       CLR  @TIBHNG(R5)
+       MOV  @READYQ,R4
+       BL   @ENQUE
+       MOV  @SIG-2,R11
+       MOV  R4,@READYQ
+       MOV  @CURTSK,R4
+       CB   @TIBPRI(R4),@TIBPRI(R5)
+       JH   SIG3
+       LI   BK,TSKSCH
+*
+SIG3    MOV     @SIG-2,R11    RESTORE ADDRESS
+        RT
+
+SIG2    INC     *R1     BUMP UP CNT
+SIG1    RT
+
+DELINK  C       @CURTSK,@READYQ
+        JNE     DEL1
+        MOV     @CURTSK,R2
+        MOV     *R2,@READYQ
+        CLR     *R2 CURTSK^NXT=NIL
+        RT
+
+DEL1    MOV     @READYQ,R2  HEAD OF RDYQ
+        CLR     R3
+DEL2    MOV     R2,R2
+        JEQ     DEL3    IF R2=0
+        C       R2,@CURTSK
+        JEQ     DEL3
+        MOV     R2,R3   COPY
+        MOV     *R2,R2 NEXT LINK
+        JMP     DEL2
+
+DEL3   MOV  R2,R2
+        JEQ     DEL4    IF R2=NIL THEN.
+        MOV     *R2,*R3 NEXT(R3)=NEXT(R2)
+        CLR     *R2  NEXT(R2)=NIL
+DEL4    RT
+
+*ENTRY: R5=TIB PTR
+*       R4=HEAD OF QUEUE
+*EXIT:  R4=UPDATED HEAD PTR
+*       R6,R7 MODIFIED
+
+ENQUE   MOV     R4,R6
+        CLR     R7      PREV NODE
+ENQ1   MOV  R6,R6       OFF END OF LIST?
+        JEQ     ENQ2    YES, INSERT
+       CB   @TIBPRI(R6),@TIBPRI(R5)  CURR PRI<REQ'D?
+        JL      ENQ2
+        MOV     R6,R7   NO
+        MOV     *R6,R6
+        JMP     ENQ1    TRY AGAIN
+*
+ENQ2    MOV     R6,*R5  LINK R6 AFTER R5
+        MOV     R7,R7   NIL?
+        JEQ     ENQ3
+        MOV     R5,*R7  LINK R7 BEFORE R5
+        RT
+
+ENQ3    MOV     R5,R4
+        RT
+
+DEQUE  MOV  R4,R5
+       MOV  *R5,R4
+       CLR  *R5
+       RT
+
+*SAVES INTERPRETER REGISTERS TO CURTASK TIB
+*  (ALSO USED BY LPR AND SPR)
+*ENTRY: R5=^TIB
+*EXIT: TIB FIELDS UPDATED
+*      R0 CHANGED
+
+SAVREG  MOV     @CURTSK,R5
+        MOV     MP,@TIBMP(R5)
+        MOV     IPC,@TIBIPC(R5)    SEGMENT RELATIVE VALUE
+        MOV     @EREC,@TIBERC(R5) SAVE EREC
+        MOV     SP,@TIBSP(R5)
+        MOVB    @CURPRO+1,@TIBPRO(R5)
+*ASSEMBLER WILL NOT ACCEPT @IORSLT+1 IF IORSLT IS EXTERNAL REFERENCE
+        LI      R1,IORSLT
+        INC     R1      R1=IORSLT+1
+        MOVB    *R1,@TIBIOR(R5)
+        RT
+
+*COPIES CURRENT TIB VALUES INTO REGISTERS
+*  R5=^TO NEW TIB
+
+RESTOR  MOV     R11,@SAVRTN
+        MOV     @CURTSK,R5
+        MOV     @TIBMP(R5),MP
+        MOV     @TIBIPC(R5),IPC
+        MOV     @TIBSP(R5),SP
+*
+        CLR     @CURPRO
+        MOVB    @TIBPRO(R5),@CURPRO+1
+        LI      R0,IORSLT
+        INC     R0       R1=IORSLT+1
+        MOVB    @TIBIOR(R5),*R0
+        MOV     @TIBERC(R5),R5
+        MOV     R5,@EREC
+        MOV     @ENVVEC(R5),@EVEC
+        MOV     @ENVSIB(R5),@SIB
+        MOV     @ENVDAT(R5),@BASE
+        CLR     CURSEG
+        MOV     IPC,@IPCFLT
+        BL      @SGCHK1
+        MOV     R4,CURSEG  SEG BASE OFFSET
+        MOV     @SIB,R1
+        INC     @TIMSTP
+        MOV     @TIMSTP,@SEGACT(R1)
+*
+       MOV  *R1,R1            SIB^.POOL_DESC
+       JEQ  REST90            internal pool...no more to do
+       MOV  *R1,R1            POOL_DESC^.POOL
+REST90 MOV  R1,@CURPOL
+*
+        MOV     @SAVRTN,R11   FIX UP TO RETURN TO CALLER
+        B       @CHKSEX       AFTER CALL TO CHKSEX

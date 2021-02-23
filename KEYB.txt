@@ -1,0 +1,81 @@
+*
+* read a character from keyboard
+* put char in r0 of caller MSBy, LSBy is cleared
+*
+READ   DATA IREGS,$+2
+READ1  CLR  R12
+       TB   8
+       JEQ  READ1             no char from kb yet
+       MOVB @>8008,R1         get kb char from /4a address
+       LI   R12,>1EF4
+       TB   0
+       JNE  READ2
+       MOVB @>F118,R1         get kb char from 9640 address
+READ2  LI   R12,>1EF0
+       SBZ  1
+       SBO  1                 cleat the kb char
+*
+       MOVB R1,R1
+       JLT  READ1             this was a break code, ignore it
+       CLR  *R13
+       SRL  R1,8
+       MOVB @SCAN1(R1),*R13
+       CB   *R13,@HFF
+       JEQ  READ1             not a good character
+       RTWP
+*
+KEYTST CLR  R12
+       TB   8
+       JEQ  KEYT98            no char from kb yet
+       MOVB @>8008,R1         get kb char from /4a address
+       LI   R12,>1EF4
+       TB   0
+       JNE  KEYT10
+       MOVB @>F118,R1         get kb char from 9640 address
+KEYT10 LI   R12,>1EF0
+       SBZ  1
+       SBO  1                 cleat the kb char
+*
+       MOVB R1,R1
+       JLT  KEYT98            this was a break code, ignore it
+*
+       CLR  R0
+       SRL  R1,8
+       MOVB @SCAN1(R1),R0
+       CB   R0,@HFF
+       JNE  KEYT99            good character
+*
+KEYT98 CLR  R0
+KEYT99 MOV  R0,R0
+       RT
+*
+HFF
+SCAN1  BYTE >FF,>1B,>31,>32     "12"
+       BYTE >33,>34,>35,>36   "3456"
+       BYTE >37,>38,>39,>30   "7890"
+       BYTE >2D,>3D,>08,>89   "-="
+*
+       BYTE >51,>57,>45,>52   "qwer"
+       BYTE >54,>59,>55,>49   "tyui"
+       BYTE >4F,>50,>5B,>5D   "op[]"
+       BYTE >0D,>FF,>41,>53     "as"  <CONTROL>
+*
+       BYTE >44,>46,>47,>48   "dfgh"
+       BYTE >4A,>4B,>4C,>3B   "jkl;"
+       BYTE >27,>60,>FF,>5C   "'` \"  <SHIFT1>
+       BYTE >5A,>58,>43,>56   "zxcv"
+*
+       BYTE >42,>4E,>4D,>2C   "bnm,"
+       BYTE >2E,>2F,>FF,>2A   "./ *"  <SHIFT2>
+       BYTE >FF,>20,>FF,>12   " "     <ALT = FCTN> <CAP LOCK>   f1
+       BYTE >05,>17,>10,>16   f2 f3 f4 f5
+*
+       BYTE >0C,>01,>06,>0F   f6 f7 f8 f9
+       BYTE >BC,>FF,>FF,>FF           <NUMLOCK> <SCROLL LOCK>
+       BYTE >0B,>0C,>2D,>08
+       BYTE >FF,>09,>2B,>FF
+*
+       BYTE >0A,>02,>04,>03
+*
+RLAST  EQU  $
+*

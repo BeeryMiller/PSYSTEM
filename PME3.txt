@@ -1,0 +1,234 @@
+*PME3 5/26/88.1
+* PROCEDURE CALL AND RETURN INSTRUCTIONS
+SCIP1   DATA    GETBYT
+        LI      R4,1
+        JMP     SCIPZ
+
+SCIP2   DATA    GETBYT
+        LI      R4,2
+
+SCIPZ   MOV     IPC,@IPCFLT
+        DECT    @IPCFLT
+        MOV     @EREC,R5
+        LI      R11,CPG2
+        B       @SETLNK
+
+*CALL INTERMEDIATE PROCEDURE
+CPI     DATA    GET2
+        MOV     IPC,R2  SET IPCFLT IN CASE OF FAULT
+        AI      R2,-3   BACK 3
+        MOV     R2,@IPCFLT
+        LI      R11,CPG2
+        B       @SETLNK
+
+*CALL LOCAL PROCEDURE
+CPL     DATA    GETBYT
+        MOV     MP,@STATLK  SET LOCAL STATIC LINK
+        JMP     CPG1
+
+*CALL GLOBAL PROCEDURE
+CPG     DATA    GETBYT
+        MOV     @BASE,@STATLK
+
+CPG1    MOV     IPC,@IPCFLT SET IPC INCASE OF FAULT
+        DECT    @IPCFLT BACK UP TWO
+
+CPG2    MOV     @EREC,R5  PREP CURRENT SEGMENT
+        BL      @BLDFRM BUILD THE STACK FRAME
+        B       *BK
+
+*CALL EXTERNAL INTERMEDIATE PROCEDURE
+CXI     DATA    GET3
+        MOV     IPC,@IPCFLT  PREPARE FOR FAULT
+        DECT    @IPCFLT
+        DECT    @IPCFLT SET BACK 4
+*               R5 HAS LOCAL SEG #
+        LI      R11,CXG2
+        B       @SETLNK
+
+*CALL EXTERNAL LOCAL
+CXL     DATA    GET2
+        MOV     MP,@STATLK
+        JMP     CXG1
+
+SCXG1   DATA    GETBYT
+        BL      @CSPCHK
+        LI      R5,1    SEGMENT 1 (BYTE OFFSET)
+        JMP     SCXGZ
+
+SCXG    DATA    GETBYT
+        SRL     R1,1
+        AI      R1,-111 NORMALIZE
+        MOV     R1,R5
+
+SCXGZ   MOV     IPC,@IPCFLT SAVE FAULT
+        DECT    @IPCFLT BACK TWO
+        MOV     @BASE,@STATLK
+        JMP     CXG20
+
+*CALL EXTERNAL GLOBAL
+CXG     DATA    GET2
+        CI      R4,1    SEE IF STANDARD PROCEDURE
+        JNE     CXG10   SEGMENT #1
+        BL      @CSPCHK
+*
+CXG10   MOV     IPC,R2  PREPAPRE FOR FAULT
+        AI      R2,-3   BACK 3
+        MOV     R2,@IPCFLT
+        MOV     R4,R5   LOCAL SEGMENT #
+*                       EREC NOW IN R5
+
+* ROUTINES ENTERING HERE MUST HAVE EREC IN R5
+CXG20   BL      @SEGCHK CHECK SEG PRESENCE
+CXG30   BL      @CHKSEX
+        BL      @BLDFRM BUILD STACK FRAME
+        BL      @CHGSIB CHANGE NEW SIB
+*
+       MOV  @BASE,*MP
+*
+        B       *BK
+*
+CXG1    MOV     IPC,R2  PREPAPRE FOR FAULT
+        AI      R2,-3   BACK 3
+        MOV     R2,@IPCFLT
+        MOV     R4,R5   LOCAL SEGMENT #
+*                       EREC NOW IN R5
+
+* ROUTINES ENTERING HERE MUST HAVE EREC IN R5
+CXG2    BL      @SEGCHK CHECK SEG PRESENCE
+CXG3    BL      @CHKSEX
+        BL      @BLDFRM BUILD STACK FRAME
+        BL      @CHGSIB CHANGE NEW SIB
+*
+        B       *BK
+
+*CALL FORMAL PROCEDURE
+CPF     DATA    2+$
+        MOV     IPC,@IPCFLT
+        DEC     @IPCFLT
+        MOV     @2(SP),R5  OPERANDS ON STACK FOR BLDFRM
+        BL      @SEGCHK WITHOUT POPPING STACK IN CASE OF
+*                       FAULT
+        MOV     *SP,R3
+        MOV     @4(SP),@STATLK
+        A       SP,6    REMOVE PARAMETERS
+        JMP     CXG3    SAME AS CXG NOW
+
+RPU     DATA    2+$
+        MOV     IPC,@IPCFLT
+        DEC     @IPCFLT
+        LI      R2,RPU2
+        B       @GETBIG
+RPU2    C       @MSENV(MP),@EREC
+        JEQ     RPU1    NO CHG OF SEG
+        MOV     @MSENV(MP),R5 PREP SEG CHECK
+        BL      @SGCHK1
+        MOV     R4,R6
+        BL      @CHKSEX
+        BL      @CHGSIB
+RPU1    MOV     MP,SP   VERIFY STACK
+        MOV     @MSPROC(SP),@CURPRO
+        JLT     RPU3   NEG IPC FIELD
+        MOV     @MSIPC(SP),IPC
+        JMP     RPU4
+
+* IF RETURNING VIA EXITIC
+* SETS IPC TO EXITIC OF CALLING PROGRAM
+RPU3    MOV     @MSPROC(SP),R1 THIS VALUE NEGATIVE
+        NEG     @CURPRO BACK TO + VAL
+
+       SLA  R1,1
+       A    @SEGHI,R1         byte offset in segment of proc_dict entry
+       BL   @SEGWRD           R2 := proc_start
+       MOV  R2,R1
+       SLA  R1,1              byte offset of proc_start in segment (data_size)
+       DECT R1                byte offset of EXITIC
+       BL   @SEGWRD
+       MOV  R2,IPC            ipc := exitic
+
+RPU4    MOV     @MSDYN(SP),MP
+        AI      SP,MSCWSZ POP STACK
+        SLA     R3,1
+        A       R3,SP   POP DATA
+        B       *BK
+
+* CSP REWRITTEN 5/21/88
+        BSS     8
+CSP     DATA    GETBYT  LEGAL STR LEN IN R3
+        MOV     IPC,@IPCFLT
+        DECT    @IPCFLT JUST IN CASE...
+        MOV     R3,@CSP-8      SAVE DECLARED COUNT
+        MOV     @2(SP),R2  DEST ADDRESS
+        MOV     R2,@CSP-6
+        MOV     *SP,R1  R1=^PARAMETER DESCRIPTOR
+        AI      SP,4    POP STACK
+        MOV     *R1,R6  1ST WD OF DESCR
+        JNE     CSP2    R6=^EREC (SRC NOT IN CPU RAM)
+
+* HERE IF STRING IS WITHIN CPU RAM
+        MOV     @2(R1),R7  LOWORD OF SRC ADDR
+        CLR     R15
+        MOVB    *R7,R15  LENGTH BYTE
+        JMP     CSP4
+
+* ARRIVES HERE IF SEGMENT IS SOURCE OF STRING
+CSP2    MOV     @2(R1),@CSP-2  OFFSET
+        MOV     *R1,R5  EREC ADDRESS
+        MOV     R5,@CSP-4 EREC
+        BL      @SGCHK1  BE SURE SEGMENT IS PRESENT
+*  IF NOT PRESENT SEGCHK WILL GET IT
+        MOV     @CSP-2,R6  OFFSET IN SEGMENT
+        MOV     @CSP-4,R5  EREC
+        BL      @GETSEG GET FULL ADDRESS
+        BL      @GETBTE GET THE BYTE
+CSP4    SWPB    R15     16 BIT FORMAT
+        C       @CSP-8,R15
+        JLT     CSP3    DESTINATION STRING TOO SHORT!
+        MOV     R15,R1  ACTUAL COUNT
+        INC     R1      COUNT BYTE
+        CLR     R4      DESTINATION HIWORD
+        MOV     @CSP-6,R5   DESTINATION LOWORD
+        BLWP    @LNGMOV
+        B       *BK
+
+*EXIT HERE IF STRING TOO LONG
+CSP3    BL      @TRAPER
+        DATA    S2LONG
+
+******COPY ARRAY PARAMETERS
+*MODIFIED FOR LINEAR ADDRESSING 1/27/88
+*REV 5/19/88
+
+        BSS     2
+CAP     DATA    2+$
+        MOV     IPC,@IPCFLT  IN CASE OF FAULT
+        DEC     @IPCFLT POINT BACK BEFORE OPCODE
+        LI      R2,CAP6
+        B       @GETBIG DO IPC STUFF FIRST BECAUSE WE DON'T
+*                       KNOW LENGTH OF BIG OPERATOR
+
+CAP6    A       R3,R3   BYTE COUNT
+        MOV     *SP+,R1 ADDR OF DESCRIPTOR
+        MOV     *SP+,R2 ADDR OF DESTINATION
+        MOV     *R1+,R6  IS IT NIL, OR IS IT EREC?
+        JNE     CAP1    NOT IN CPU RAM
+
+*IF ARRAY IN CPU RAM
+        MOV     *R1,R1  R1 CONTAINS CPU ADDRESS
+        BL      @MOVEB  COPY THEM IN
+CAP5    B       *BK     EXIT
+
+* IF SOURCE IN SEGMENT
+CAP1    MOV     R2,@POLBUF  DESTINATION
+        MOV     R3,@POLREM  BYTE COUNT
+        MOV     R6,R5   EREC
+*
+       MOV  *R1,R6            offset in segment
+       BL   @SGCHK1           move segment to memory
+       BL   @GETSEG           convert erec:offset to fulladdress
+*
+        MOV     @POLBUF,R5    LO WORD OF DEST
+        CLR     R4      DEST IN CPU RAM
+        MOV     @POLREM,R1   COUNT
+        BLWP    @LNGMOV
+        B       *BK

@@ -1,0 +1,275 @@
+*STDPR2 11/16/87.2
+*CONTAINS IDSEARCH AND TREESEARCH
+
+*TOS=SYMBOL BUFFER ADDR
+*TOS-1=RECORD:
+*       0=SYMCURSOR
+*       2=SY
+*       4=OP
+*       6=ID
+
+
+IDS     MOV     *SP+,R1 BUFFER BASE ADDR
+        MOV     R1,@STSRCH SAVE FOR FUTURE
+        MOV     *SP+,R2 SYMCURSOR
+        A       *R2,R1  START SEARCH HERE
+        MOV     R2,@SAVSYM
+        MOV     R2,R4
+        INCT    R2      SY ADDR
+        AI      R4,6    IDCODE ADDR
+        LI      R3,4    IDCODE WORD CNT
+        MOV     R4,R5   IDCODE START
+IDS11   MOV     @BLANK,*R4+
+        DEC     R3
+        JGT     IDS11
+*
+        MOV     R5,R4   IDCODE START
+        LI      R3,8    CHAR COUNT
+IDS22   CLR     R6
+        MOVB    *R1+,R6  NEXT BYTE
+        CI      R6,>5F00  UNDERSCORE
+        JEQ     IDS22   DOES NOT COUNT
+        CI      R6,>3900 NUMERAL 9
+        JLE     IDS1    SPECIAL HANDLING
+        ANDI    R6,>DF00 UPPER CASE ONLY
+        CI      R6,>4100 'A'
+        JL      IDS5    END OF STRING
+        CI      R6,>5A00 'Z'
+        JH      IDS5
+IDS33   DEC     R3
+       JLT  IDS22       END OF STRING
+        MOVB    R6,*R4+ STUFF INTO IDCODE
+        JMP     IDS22   NEXT CHAR
+*HANDLE SPECIAL CHARACTERS
+IDS1    CI      R6,>3000 BYTE '0'
+        JHE     IDS33
+        CI      R6,>2400 '$'
+        JEQ     IDS33
+
+IDS5   DECT R1                LAST CHAR
+        S       @STSRCH,R1 OFFSET TO LAST CHAR
+        MOV     R1,@IDEND SAVE THIS VAL
+        MOV     R5,R4   BACK TO 1ST CHAR
+        CLR     R1
+        MOVB    *R4,R1
+        SWPB    R1
+        AI      R1,-65  NORMALIZE 1ST CHAR
+        JLT     FKY77   INVALID START CHAR
+        CI      R1,25
+        JGT     FKY77
+        SLA     R1,2    MPY *4
+        MOV     @CHRTBL(R1),R3  SUBTABLE ENTRY POINT
+        MOV     @CHRTBL+2(R1),R1 # WORDS IN SUBTABLE
+        B       @FNDKEY
+
+FNDKEY  LI      R0,4    EACH ENTRY 4 WORDS LONG
+        MOV     R3,@TEMP SAVE START ADDR
+FKY0    C       *R4+,*R3+  COMPARE TO TABLE ENTRY
+        JNE     FKY66   FAILED MATCH
+        DEC     R0
+        JGT     FKY0
+        MOV     @SAVSYM,R1
+        MOV     @IDEND,*R1
+        CLR     *R2
+        MOVB    *R3+,@1(R2) FILL SY
+        INCT    R2      PTR TO OP
+        CLR     *R2     CLR OP
+        MOVB    *R3,@1(R2)
+        INCT    R2      PTR TO IDCODE
+        LI      R4,4    ID WORD COUNT
+        B       *BK     FINISHED
+
+
+FKY66   DEC     R1      RES WORD TABLE CTR
+        JEQ     FKY77   NONE LEFT TO CHECK
+        MOV     @TEMP,R3
+        AI      R3,10   STEP TO NEXT ENTRY
+        MOV     R5,R4   RESET TO START OF IDCODE
+        JMP     FNDKEY
+
+*NOT RESERVED WORD:
+FKY77   MOV     @SAVSYM,R2 SYSTEM CURSOR
+        MOV     @IDEND,*R2 TO END OF TOKEN
+        INCT    R2      PTR TO SY
+        CLR     *R2+    CLR SY
+        LI      R1,15   'NOP' VALUE
+        MOV     R1,*R2
+        B       *BK
+
+CHRTBL  DATA    ATABLE,2
+        DATA    BTABLE,1
+        DATA    CTABLE,2
+        DATA    DTABLE,4
+        DATA    ETABLE,3
+        DATA    FTABLE,4
+        DATA    GTABLE,1
+        DATA    NOKEY,1
+        DATA    ITABLE,4
+        DATA    NOKEY,1
+        DATA    NOKEY,1
+        DATA    LTABLE,1
+        DATA    MTABLE,1
+        DATA    NTABLE,1
+        DATA    OTABLE,2
+        DATA    PTABLE,4
+        DATA    NOKEY,1
+        DATA    RTABLE,2
+        DATA    STABLE,3
+        DATA    TTABLE,3
+        DATA    UTABLE,3
+        DATA    VTABLE,1
+        DATA    WTABLE,2
+        DATA    NOKEY,1
+        DATA    NOKEY,1
+        DATA    NOKEY,1
+
+NOKEY   TEXT    '@@@@@@@@'
+        BYTE    0,15
+
+ATABLE  TEXT    'AND     '
+        BYTE    39,2
+        TEXT    'ARRAY   '
+        BYTE    44,15
+
+BTABLE  TEXT    'BEGIN   '
+        BYTE    19,15
+
+CTABLE  TEXT    'CASE    '
+        BYTE    21,15
+        TEXT    'CONST   '
+        BYTE    28,15
+
+DTABLE  TEXT    'DEFINITI'
+        BYTE    0,15
+        TEXT    'DIV     '
+        BYTE    39,3
+        TEXT    'DO      '
+        BYTE    6,15
+        TEXT    'DOWNTO  '
+        BYTE    8,15
+
+ETABLE  TEXT    'ELSE    '
+        BYTE    13,15
+        TEXT    'END     '
+        BYTE    9,15
+        TEXT    'EXTERNAL'
+        BYTE    53,15
+
+FTABLE  TEXT    'FOR     '
+        BYTE    24,15
+        TEXT    'FILE    '
+        BYTE    46,15
+        TEXT    'FORWARD '
+        BYTE    34,15
+        TEXT    'FUNCTION'
+        BYTE    32,15
+
+GTABLE  TEXT    'GOTO    '
+        BYTE    26,15
+
+ITABLE  TEXT    'IF      '
+        BYTE    20,15
+        TEXT    'IMPLEMEN'
+        BYTE    52,15
+        TEXT    'IN      '
+        BYTE    41,14
+        TEXT    'INTERFAC'
+        BYTE    51,15
+
+LTABLE  TEXT    'LABEL   '
+        BYTE    27,15
+
+MTABLE  TEXT    'MOD     '
+        BYTE    39,4
+
+NTABLE  TEXT    'NOT     '
+        BYTE    38,15
+
+OTABLE  TEXT    'OF      '
+        BYTE    11,15
+        TEXT    'OR      '
+        BYTE    40,7
+
+PTABLE  TEXT    'PACKED  '
+        BYTE    43,15
+        TEXT    'PROCEDUR'
+        BYTE    31,15
+        TEXT    'PROCESS '
+        BYTE    56,15
+        TEXT    'PROGRAM '
+        BYTE    33,15
+
+RTABLE  TEXT    'RECORD  '
+        BYTE    45,15
+        TEXT    'REPEAT  '
+        BYTE    22,15
+
+STABLE  TEXT    'SEPARATE'
+        BYTE    54,15
+        TEXT    'SET     '
+        BYTE    42,15
+        TEXT    'SEGMENT '
+        BYTE    33,15
+
+TTABLE  TEXT    'THEN    '
+        BYTE    12,15
+        TEXT    'TO      '
+        BYTE    7,15
+        TEXT    'TYPE    '
+        BYTE    29,15
+
+UTABLE  TEXT    'UNIT    '
+        BYTE    50,15
+        TEXT    'UNTIL   '
+        BYTE    10,15
+        TEXT    'USES    '
+        BYTE    49,15
+
+VTABLE  TEXT    'VAR     '
+        BYTE    30,15
+
+WTABLE  TEXT    'WHILE   '
+        BYTE    23,15
+        TEXT    'WITH    '
+        BYTE    25,15
+
+*TREESEARCH
+*NODE CONSTRUCTION:
+*       8 BYTES: CHAR CODE NAME
+*       2 BYTES: RIGHT PTR
+*       2 BYTES: LEFT PTR
+*ENTRY STACK:
+*       TARGET NAME PTR
+*       PTR TO VAR 'FOUNDP'
+*       PTR TO ROOT OF TREE
+
+TRS     MOV     *SP+,R1 TARGET NAME PTR
+        MOV     @2(SP),R2 ROOT OF TREE
+TLOOP  C    *R1,*R2           1ST WORD
+        JNE     SUBTRE
+        C       @2(R1),@2(R2) 2ND WORD
+        JNE     SUBTRE
+        C       @4(R1),@4(R2) 3RD WD
+        JNE     SUBTRE
+        C       @6(R1),@6(R2) 4TH WORD
+        JNE     SUBTRE
+        CLR     R1      MATCH
+        JMP     EXITRS
+SUBTRE  JH      RTREE   TARG>ROOT
+        MOV     @10(R2),R4 ELSE LEFT
+        JNE     NEWROT  CONT SEARCH
+        LI      R1,-1
+        JMP     EXITRS  SEARCH OVER
+
+RTREE   MOV     @8(R2),R4 RIGHT BRANCH
+        JNE     NEWROT
+        LI      R1,1
+
+EXITRS  MOV     *SP+,R4 'FOUNDP' ADDR
+        MOV     R2,*R4
+        INCT    SP      POP ROOT PTR
+        MOV     R1,*SP
+        B       *BK
+
+NEWROT  MOV     R4,R2
+        JMP     TLOOP

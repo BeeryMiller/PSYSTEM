@@ -1,0 +1,359 @@
+*PME4 7/28/88.2
+*SET INSTRUCTIONS
+
+SETJMP  DATA    EQUSET,LEQSET,GEQSET
+BITWRD  DATA    1,2,4,8,16,32,64,128,256
+        DATA    512,1024,2048,4096,8192
+        DATA    16384,>8000
+WRDBIT  DATA    16
+*ADJUST SET
+ADJ     DATA    GETBYT
+        MOV     *SP,R1  CURRENT SIZE
+        C       R1,R3   CMP TO REQUESTED SIZE
+        JLT     ADJ0    EXPAND IT
+        JGT     ADJ5    CUT IT DOWN
+        INCT    SP
+        B       *BK
+
+ADJ0    S       R1,R3   SIZE DIFF
+        MOV     R3,R0
+        SLA     R3,1    BYTE
+        MOV     IPC,@IPCFLT
+        DECT    @IPCFLT INCASE OF TROUBLE
+        MOV     @EREC,@SAVREC
+        MOV     R3,@STKEXT
+        BL      @STKCHK
+        INCT    SP      SP=FIRST WORD OF SET
+        MOV     SP,R2   SOURCE
+        S       R3,SP   AREA TO ZERO-FILL
+        MOV     SP,R3   DEST
+        MOV     R1,R1   SET SIZE 0 TO START?
+        JEQ     ADJ3    YES, GET ON WITH ZEROES
+ADJ1    MOV     *R2+,*R3+  COPY FURTHER ON STACK
+        DEC     R1
+        JGT     ADJ1
+ADJ3    CLR     *R3+    PUSH ZERO WD
+        DEC     R0      # ZERO WORDS TO ADD
+        JGT     ADJ3
+        B       *BK
+
+* COMPRESS SET:
+ADJ5    MOV     R3,R4   SAVE REQ LENGTH
+        SLA     R3,1    BYTE
+        A       SP,R3   END OF SOURCE
+        SLA     R1,1    BYTE VALS
+        A       SP,R1   DEST FOR COPY
+ADJ6    MOV     *R3,*R1 MOV A WORD
+        DECT    R3      DECR SOURCE
+        DECT    R1      DECR DEST
+       DEC  R4                DECR COUNT
+        JGT     ADJ6
+        MOV     R1,SP   NEW TOS
+        INCT    SP      CORRECT EXTRA DECT
+        B       *BK
+
+*BUILD A SUBRANGE SET
+SRS     DATA    2+$
+        MOV     *SP,R1  HI BIT #
+        MOV     @2(SP),R3  LO BIT #
+        JLT     SRS15 LONUM<0 BUILD NULL SET
+        C       R3,R1
+        JGT     SRS15 LO>HINUM; BUILD NULL SET
+        CLR     R2
+        DIV     @WRDBIT,R2 (0000R3/16)
+*R2(RESULT)=# OF ZERO WORDS BEFORE ACTIVE ELEMENTS
+*R3(REM)=# OF ZEROES IN FIRST SIGNIFICANT WORD
+        MOV     R2,@ZERWRD #WORDS TO ZERO
+        SLA     R3,1    BYTE OFFSET
+        MOV     @OFFMSK(R3),R4  TURN ON CORRECT BITS
+        MOV     R4,@FSTWRD      SAVE
+
+*SPECIAL TREATMENT IF
+*LOW BIT IN SAME WORD AS HI BIT
+        CLR     @SAMEWD ASSUME FALSE FOR NOW
+        INC     R2      AT LEAST 1 WORD
+        SLA     R2,4    1ST BIT IN SAME WORD?
+        C       R1,R2
+        JGT     SRS7    NO
+        JEQ     SRS7
+        INV     @SAMEWD SHORTER THAN 1 WORD
+        AI      R2,-16 LOW END BACK 1 WORD
+
+SRS7    S       R2,R1   # ON BITS IN HIGHEST WORD
+        CLR     R0
+        DIV     @WRDBIT,R0  R0=RES; R1=REMAINDER
+        MOV     R0,@ONEWRD  # OR WORDS OF 1'S
+        INC     R1      INCR REM FOR LAST BIT
+        SLA     R1,1    INDEX VAL
+        MOV     @ONMSK(R1),R3
+        MOV     R3,@LSTWRD  MASK FOR LAST WORD
+        MOV     @ONEWRD,R2
+        A       @ZERWRD,R2
+        MOV     @SAMEWD,@SAMEWD
+        JNE     SRS8    LASTWORD=FIRSTWORD
+        INC     R2      INCLUDE LASTWORD
+SRS8    INC     R2      INCLUDE FIRSTWORD
+        MOV     R2,R5
+        SLA     R2,1
+        MOV     R2,@STKEXT
+        MOV     IPC,@IPCFLT  JUST IN CASE
+        DEC     @IPCFLT
+        MOV     @EREC,@SAVREC
+        BL      @STKCHK
+        AI      SP,4    NO FAULT, POP PARMS
+        MOV     @SAMEWD,@SAMEWD
+        JEQ     SRS9    NOT SAME WORD
+* FIRSTWORD=LASTWORD
+        MOV     @FSTWRD,R2 COMBINE
+        XOR     @LSTWRD,R2
+        INV     R2
+        DECT    SP
+        MOV     R2,*SP  PUSH THE SINGLE WORD
+        JMP     SRS5
+
+SRS9   DECT SP                -pc 1/6/91
+        MOV     @LSTWRD,*SP LAST SIG WORD
+        MOV     @ONEWRD,R1
+        JEQ     SRS2    NO WORDS OF 1'S
+        LI      R3,>FFFF ALL ONES
+SRS1    DECT    SP
+        MOV     R3,*SP  PUSH 1'S
+        DEC     R1
+        JGT     SRS1    AS MANY AS NEEDED
+SRS2    DECT    SP
+        MOV     @FSTWRD,*SP  PUSH FIRST WORD
+SRS5    CLR     R2
+        MOV     @ZERWRD,R1 #ZEROWORDS
+        JEQ     SRS4    NO WORDS OF 0'S
+SRS3    DECT    SP
+        MOV     R2,*SP  PUSH 0'S
+        DEC     R1
+        JGT     SRS3
+SRS4    DECT    SP
+        MOV     R5,*SP  PUSH WORD COUNT
+        B       *BK
+
+*PUSH A NULL SET AFTER POPPING PARMS
+SRS15   INCT    SP
+        CLR     *SP
+        B       *BK
+
+*THIS VERSION ADAPTED FROM DSK1.SET IN TI INT41
+INN       DATA    2+$
+          MOV       *SP+,R0        ; SET SIZE FROM TOS
+          MOV       SP,R1          ; POINT R1 AT THE INTEGER VALUE
+          A         R0,R1          ; BY SKIPPING IT
+          A         R0,R1          ; ABOVE THE SET
+          MOV       *R1,R3         ; NOW HAVE THE ACTUAL VALUE
+          JLT       INN0           ; NO NEGATIVE INDEXES!
+          CLR       R2             ; FOR DIV
+          DIV       @WRDBIT,R2    ; DIV BY 16 FOR # OF WORDS
+          C         R0,R2          ; ENOUGH WORDS IN SET TO HANDLE THE VALUE?
+          JLE       INN0           ; NO
+          SLA       R2,1           ; POINT R2 AT THE
+          A         SP,R2          ; WORD WHICH HAS THE BIT IN IT
+          MOV       *R2,@TEMP       ; SAVE THE CONTENTS OF THAT WORD
+          MOV       *R1,R3         ; GET TEST VALUE AGAIN
+          CLR       R2             ; FOR DIV
+          DIV       @WRDBIT,R2    ; DIV BY 16
+          SLA       R3,1           ; DOUBLE REMAINDER FOR INDEXING BIT TABLE
+          MOV       @BITWRD(R3),R4   GET THE PROPER BIT MASK
+          INV       R4             ; PREPARE FOR THE 'AND' OPERATION
+          MOV       @TEMP,R2        ; GET THE TEST WORD AGAIN
+          SZC       R4,R2          ; IS THE BIT ON?
+          JEQ       INN0           ; JUMP IF RESULT 0 (BIT NOT ON)
+          MOV       R1,SP          ; THE BIT IS ON; CUT BACK STACK NOW
+*SP POINTS TO FIRST WORD ABOVE STACK
+       MOV  @ONE,*SP          LEAVE TRUE FLAG
+          B         *BK
+*
+INN0      MOV       R1,SP          ; CUT BACK STACK
+          CLR       *SP            FALSE FLAG
+          B         *BK
+
+************************
+* OLD VERSION OF SET KEPT FOR TEMPORARY ARCHIVAL PURPOSES
+* 7/28/88
+* REMOVE THIS FROM FINAL CODE
+*SET MEMBERSHIP
+*INN     DATA    2+$
+        MOV     *SP+,R3 INDEX VALUE
+        MOV     *SP+,R0 SET SIZE
+*                       SP->FIRST WORD OF SET
+        MOV     SP,R1   R1->INT PTR
+        A       R0,R1
+        A       R0,R1   POINTS JUST PAST SET
+        JLT     INN0    NEG INDEX
+        CLR     R2      PREP FOR DIV
+        DIV     @WRDBIT,R2 R2=#WORDS
+*                       R3=OFFSET INTO WORD
+        C       R0,R2   ENOUGH WORDS?
+        JLE     INN0    NO
+        SLA     R2,1    BYTE COUNT
+        A       SP,R2   R2->WORD TO CHECK
+        MOV     *R2,@TEMP SAVE WORD
+        SLA     R3,1    BYTE OFFSET
+        MOV     @BITWRD(R3),R5 SELECT BIT MASK
+        INV     R5
+        MOV     @TEMP,R2
+        SZC     R5,R2
+        JEQ     INN0    BIT NOT ON
+        MOV     R1,SP   CUT BACK STACK
+        DECT    SP      FIRST AVAILABLE WORD
+        SETO    *SP     LEAVE TRUE FLAG
+        B       *BK
+
+*LEAVE A FALSE FLAG
+**INN0    MOV     R1,SP   CUT BACK STACK
+        DECT    SP      FIRST AVAILABLE WORD
+        CLR     *SP     FALSE, BIT NOT IN SET
+        B       *BK
+
+***********END OF SECTION TO BE DELETED
+
+
+
+*CALLED BY SEVERAL SET ROUTINES TO ADJUST SET
+*SIZE IF NECESSARY
+* ENTRY: TWO SETS ON STACK
+* EXIT: SET TOS-1 PADDED IF NECESSARY TO MATCH TOS
+*       SP->FIRST FLAG WD OF TOS SET
+*       R1=SET SIZE
+*       R2->FIRST FLAG WD OF TOS-1
+*       EQ BIT SET IF NULL SET
+
+SETADJ  MOV     *SP+,R1 POP SET SIZE
+        MOV     SP,R2
+        A       R1,R2
+        A       R1,R2   PTS AT NEXT SET SIZE
+        C       *R2+,R1 COMPARE SET SIZES
+        JEQ     SETAD3
+        JGT     SETAD3
+        DECT    SP      PTR TOS SETSIZE
+        MOV     *SP,R1  GET ACTUAL SIZE
+        DECT    R2      TOS-1 SIZE
+        MOV     *R2,@TEMP SIZE OF SMALLER SET
+        MOV     R1,*R2  =SIZE AFTER EXP
+        MOV     R1,R2
+        S       @TEMP,R2 #WORDS OF 0'S
+        MOV     R2,@ZERWRD SAVE COUNT
+        A       @TEMP,R1 TOTAL # WORDS TO COPY
+        INCT    R1      INCL LENGTH WORDS (2 SETS)
+        MOV     SP,@TEMP OLD TOS
+        SLA     R2,1    BYTE COUNT
+        S       R2,SP   MAKE ROOM
+        MOV     SP,R2   DESTINATION
+        MOV     @TEMP,R3 SOURCE PTR
+SETAD1  MOV     *R3+,*R2+ COPY
+        DEC     R1
+        JGT     SETAD1
+        MOV     @ZERWRD,R1 #ZERO WORDS TO ADD
+SETAD2  CLR     *R2+
+        DEC     R1
+        JGT     SETAD2
+        B       @SETADJ TEST AGAIN & EXIT
+SETAD3  MOV     R1,R1   SET SIZE 0? SETS FLAG FOR CALLER
+        B       *R11
+
+*SET UNION
+UNI     DATA    2+$
+        BL      @SETADJ ADJUST SETS
+        JEQ     UNI2    DONT LOOP 0 SIZE
+UNI1    SOC     *SP+,*R2+  DO THE UNION
+        DEC     R1
+        JGT     UNI1
+UNI2    B       *BK
+
+*SET INTERSECTION
+INT     DATA    2+$
+        BL      @SETADJ ADJUST IF NEED
+        MOV     R1,@TEMP TOS SET SIZE
+        JEQ     INT2    0 SIZE
+INT1    INV     *SP
+        SZC     *SP+,*R2+ AND OPER
+        DEC     R1
+        JGT     INT1
+INT2    MOV     *SP,R1  FINAL SET SIZE
+        S       @TEMP,R1 LESS OLD TOS SIZE
+        JEQ     INT4    NO LEFTOVER WDS
+INT3    CLR     *R2+    ZERO EXTRA WDS
+        DEC     R1
+        JGT     INT3
+INT4    B       *BK
+
+*SET DIFFERENCE
+DIF     DATA    2+$
+        BL      @SETADJ ADJ SIZES IF NEEDED
+        JEQ     DIF2
+DIF1    SZC     *SP+,*R2+
+        DEC     R1
+        JGT     DIF1
+DIF2    B       *BK
+
+*SET COMPARISON ROUTINES
+
+SETCMP  DATA    2+$
+        MOV     R1,R5
+        BL      @SETADJ FIX SIZE
+        DECT    R2      PTR TOS-1 SIZE
+        MOV     *R2+,R4
+        SLA     R4,1    BYTE
+        A       R2,R4   FUTURE SP
+        MOV     R4,@NEWSP
+        AI      R5,-364 NORMALIZED INDX
+        MOV     @SETJMP(R5),R4
+        DECT    R2      PTR LOWER SET SIZE
+        MOV     *R2+,R3 HOLD SIZE
+        B       *R4     SELECT PROPER COMPARISON
+
+*ENTRY FOR POINTS BELOW:
+*      SP->TOS SET
+*      R2->TOS-1 SET
+*      R1=COUNT TOS
+*      R3=COUNT TOS-1
+
+EQUSET  MOV     R1,R1   SET SIZE 0?
+        JEQ     ZERSET
+EQUS1   C       *SP+,*R2+  CMPAR WORDS
+        JNE     FALSET
+        DEC     R3
+        DEC     R1
+        JGT     EQUS1
+ZERSET  MOV     R3,R3   TOS-1 SIZE 0?
+        JEQ     TRUSET
+
+*THIS CODE IF TOS-1 IS LONGER THAN TOS
+EQUS2   MOV     *R2+,R1 "0" WORDS OK
+        JNE     FALSET
+        DEC     R3
+        JGT     EQUS2
+        JMP     TRUSET  MADE IT THIS FAR
+
+FALSET  MOV     @NEWSP,SP FIX STACK
+        DECT    SP
+        CLR     *SP     PUSH FALSE
+        B       *BK
+
+TRUSET  MOV     @NEWSP,SP
+        DECT    SP
+       MOV  @ONE,*SP    PUSH TRUE
+        B       *BK
+
+LEQSET  MOV     R1,R1   TOS SIZE=0?
+        JEQ     LEQ2
+LEQ1    SZC     *SP+,*R2+ CHECK FOR MISMATCH
+        JNE     FALSET
+        DEC     R3
+        DEC     R1
+        JGT     LEQ1
+
+LEQ2    B       @ZERSET
+
+GEQSET  MOV     R1,R1   SIZE=0?
+        JEQ     TRUSET
+GEQ1    SZC     *R2+,*SP+ TOS-1 AND NOT TOS
+        JNE     FALSET
+        DEC     R1
+        JGT     GEQ1
+        JMP     TRUSET
+

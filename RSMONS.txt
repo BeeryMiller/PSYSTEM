@@ -1,0 +1,127 @@
+SECWS  BSS  32
+RSMON2 DATA SECWS,RMON2
+RSOUT  DATA SECWS,ROUT
+RSBYTE DATA SECWS,RSBYT
+RSMON  DATA SECWS,$+2
+*
+       MOV  @6(R13),R2        get opcode #
+*
+       LI   R0,>0D0D
+       BL   @SECBYT
+*
+       BL   @HEXWD
+       BL   @SECSPC
+*
+       MOV  @20(R13),R3
+       LI   R0,'SS'
+       BL   @SECBYT
+       MOV  R3,R2
+       BL   @HEXWD
+       BL   @SECSPC
+*
+       LI   R0,'MM'
+       BL   @SECBYT
+       MOV  @18(R13),R2
+       BL   @HEXWD
+       BL   @SECSPC
+*
+       LI   R0,'II'
+       BL   @SECBYT
+       MOV  @16(R13),R2
+       BL   @HEXWD
+       BL   @SECSPC
+*
+       LI   R0,'FF'
+       BL   @SECBYT
+       MOV  @26(R13),R2
+       BL   @HEXWD
+       BL   @SECSPC
+*
+       MOV  *R3+,R2           *sp
+       BL   @HEXWD
+       BL   @SECSPC
+       MOV  *R3+,R2
+       BL   @HEXWD
+       BL   @SECSPC
+       MOV  *R3+,R2           @4(sp)
+       BL   @HEXWD
+       BL   @SECSPC
+       MOV  *R3+,R2
+       BL   @HEXWD
+       BL   @SECSPC
+       MOV  *R3+,R2           @8(sp)
+       BL   @HEXWD
+       BL   @SECSPC
+       MOV  *R3+,R2
+       BL   @HEXWD
+
+RSCRLF LI   R0,>0D0A
+       BL   @SECBYT
+       SWPB R0
+       BL   @SECBYT
+       RTWP
+*
+RMON2  LI   R0,'[ '
+       BL   @SECBYT
+*
+       MOV  @CURSEG*2(R13),R2
+       BL   @HEXWD
+       LI   R0,': '
+       BL   @SECBYT
+       MOV  @IPC*2(R13),R2
+       DEC  R2
+       BL   @HEXWD
+       LI   R0,', '
+       BL   @SECBYT
+       MOV  @2(R13),R2
+       BL   @HEXWD
+       LI   R0,'] '
+       BL   @SECBYT
+       RTWP
+*
+RSBYT  LI   R0,', '
+       BL   @SECBYT
+       MOVB *R13,R1
+       SRL  R1,12
+       BL   @SECHEX
+       MOVB *R13,R1
+       SRL  R1,8
+       BL   @SECHEX
+       RTWP
+
+ROUT   MOV  *R13,R0
+       BL   @SECBYT
+       RTWP
+
+HEXWD  MOV  R11,@HEXRT+2
+       MOV  R2,R1
+       SRL  R1,12
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       SRL  R1,8
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       SRL  R1,4
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       BL   @SECHEX
+HEXRT  B    @0
+*
+SECSPC LI   R0,'  '
+       JMP  SECBYT
+*
+SECHEX ANDI R1,>000F
+       MOVB @MONCHR(R1),R0
+SECBYT LI   R12,>1380
+       SBO  16
+SECBY2 TB   22
+       JNE  SECBY2
+       LDCR R0,8
+       SBZ  16
+       RT
+*
+MONCHR TEXT '0123456789ABCDEF'
+*

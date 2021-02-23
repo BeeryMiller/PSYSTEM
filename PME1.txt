@@ -1,0 +1,384 @@
+*PME1  2/22/89.1
+
+*TRANSFER TO EMBEDDED NATIVE CODE
+*REV 4/6/88.1
+*RETURN FROM YOUR CODE BY
+*      B    *R12
+*
+*ALLOWS POSITION INDEPENDANT NATIVE CODE
+*IN CODE POOLS.  XOPS ARE STILL AVAILABLE
+*BUT DON'T COUNT ON ANYTHING ELSE
+*ROUTINE MUST PERSERVE R8-R13
+
+NATNDX  BSS     2
+NAT     DATA    2+$
+        INCT    R14     R14 STILL HAS LO WORD ADDRESS OF LAST
+*                       BYTE ACCESSED IN CODE SEGMENT
+*                       FROM NXTBYT
+        ANDI    R14,>FFFE  INCREMENT TO EVEN ADDRESS
+        MOV     @CURPOL,R6  HIWORD OF EXECUTION ADDRESS
+        MOV     R14,R2  EXTRA COPY
+        MOV     R14,@NATNDX   SAVE START POINT FOR RETURN
+        ANDI    R14,MASK8K    CALCULATE 8K INDEX
+        AI      R14,>4000     INTO BLOCK AT >4000
+        SRL     R2,13   3 HI BITS
+        SLA     R6,3
+        A       R2,R6   CONTAINS INDEX FOR MEMORY MAP
+
+        AI      R6,SYSMAP
+        MOVB    *R6+,@BLK8K  MAP IN AT >4000
+        MOVB    *R6,@BLK8K+1 AND AT >6000
+*       THIS ALLOWS A MINIMUM OF 8K AVAILABLE FOR CODE
+
+        LI      R12,NATEXT
+        B       *R14
+
+
+*EXIT ROUTINE FOR NATIVE CODE CALLS
+NATEXT  MOV     R11,R15 ADDRESS OF NEXT OPCODE
+        AI      R15,->4000    NORMALIZE TO BLOCK OFFSET
+        LI      R1,SYSMAP
+        INCT    R1
+        MOVB    *R1+,@BLK8K    GET BACK TO HEAP/STACK MEMORY
+        MOVB    *R1,@BLK8K+1
+        MOV     @NATNDX,R0
+        ANDI    R0,>E000 ONLY HI 3 BITS NEEDED
+        A       R11,R0  NOW HAS PROPER LOW WORD FOR NEXT BYTE
+        S       CURSEG,R11    CALCULATE NEW SEGMENT REL IPC
+        MOV     R11,IPC  UPDATE PROGRAM POINTER
+        LI      BK,BACK
+        B       *BK
+
+NATINF  DATA    GETBYT  SKIP NAT CODE INFO
+        A       R3,IPC  # BYTES TO SKIP
+        B       *BK
+
+UNDF    DATA    2+$
+        BL      @TRAPER
+        DATA    NOTIMP
+
+BPT     DATA    2+$
+        BL      @TRAPER
+        DATA    BRKPNT
+
+*****************JUMP INSTRUCTIONS
+
+*TRUE JUMP
+TJP     DATA    GETBYT
+        MOV     *SP+,R1 POP VAL
+        SRL     R1,1
+        JOC     TAKJMP  TRUE VAL ON STACK
+        B       *BK
+
+*FALSE JUMP
+FJP     DATA    GETBYT
+        MOV     *SP+,R1 POP VAL
+        SRL     R1,1
+        JNC     TAKJMP  FALSE VAL ON STACK
+        B       *BK
+
+* R3 HAS JUMP OFFSET
+TAKJMP  CI      R3,>80  SIGN EXTEND?
+        JLT     TJ1
+TJ0     ORI     R3,>FF00 SIGN EXTEND
+TJ1     A       R3,IPC
+        B       *BK
+
+*UNCONDITIONAL JMP
+UJP     DATA    GETBYT
+        JMP     TAKJMP  JUST JUMP
+
+*EQUAL FALSE JUMP (JUMP IF TOS<>TOS-1)
+EFJ     DATA    GETBYT
+        C       *SP+,*SP+  TOS VS TOS-1
+        JNE     TAKJMP
+        B       *BK
+
+*NOT EQUAL FALSE JUMP (JUMP IF TOS=TOS-1)
+NFJ     DATA    GETBYT
+        C       *SP+,*SP+  TOS VS TOS-1
+        JEQ     TAKJMP
+        B       *BK
+
+*UNCONDITIONAL LONG JUMP
+
+UJPL    DATA    GET2
+LNGJMP  SWPB    R3      GET HIBYTE OF JUMP
+        SOC     R3,R4
+        A       R4,IPC
+        B       *BK
+
+*FALSE LONG JUMP
+FJPL    DATA    GET2
+        MOV     *SP+,R1 POP TOS
+        SRL     R1,1    TEST LS BIT
+        JNC     LNGJMP  JUMP IF 0
+        B       *BK
+
+*CASE JUMP
+XJP     DATA    GETBIG
+        SLA     R3,1    BYTE OFFSET
+        A       @CPOFST,R3  ADDR OF JUMP TABLE
+        MOV     R3,R1
+        BL      @SEGCHW
+        MOV     R2,R0   R0=MIN LIMIT
+        BL      @SEGCHW R4=MAX LIMIT
+        MOV     *SP+,R3 R3=INDEX INTO TABLE
+        C       R3,R2   INDEX>MAX?
+        JGT     XJP1
+        S       R0,R3   <MINIMUM?
+        JLT     XJP1
+        SLA     R3,1    BYTE ADDR
+        A       R3,R1   ADD ADDR OF TABLE START
+        BL      @SEGCHW
+        A       R2,IPC
+XJP1    B       *BK
+
+*SHORT LOAD CONSTANT
+SLDCI   DATA    2+$
+        SRL     R1,1   RESTORE OPCODE
+        DECT    SP
+        MOV     R1,*SP  PUSH VALUE
+        B       *BK
+
+*SHORT LOAD LOCAL
+SLDLS   DATA    2+$
+        A       MP,R1
+        DECT    SP      PUSH
+        MOV     @MSDLTA-62(R1),*SP NORMALIZE+MSCW LENGTH
+        B       *BK
+
+*SHORT LOAD GLOBALS
+SLDOS   DATA    2+$
+        A       @BASE,R1 ADD LEX LEVEL 0 PTR
+        DECT    SP      PUSH
+        MOV     @MSDLTA-94(R1),*SP
+        B       *BK
+
+*SHORT INDEX & LOAD
+SSINDS  DATA    2+$
+        AI      R1,-240 NORMALIZE
+        A       *SP,R1
+        MOV     *R1,*SP
+        B       *BK
+
+*NOP
+NONE    DATA    2+$
+        B       *BK
+
+*LOAD BYTE
+LDB     DATA    2+$
+        MOV     *SP+,R1
+        A       *SP,R1  ADD TOS+ TOS-1
+        CLR     *SP
+        MOVB    *R1,@1(SP)
+        B       *BK
+
+*STORE BYTE
+STB     DATA    2+$
+        MOV     @2(SP),R1
+        A       @4(SP),R1  TOS+ TOS-1
+        MOVB    @1(SP),*R1 STORE AT THIS DEST
+        AI      SP,6    POP 3 WORDS
+        B       *BK
+
+*STATIC INDEX & LOAD
+IND     DATA    GETBIG  WORD PTR
+        SLA     R3,1
+        A       *SP,R3  ADD OFFSET
+        MOV     *R3,*SP PUSH THE WORD POINTED AT
+        B       *BK
+
+*INCREMENT FIELD PTR
+IINC    DATA    GETBIG
+        SLA     R3,1
+        A       R3,*SP
+        B       *BK
+
+*INDEX ARRAY
+IXA     DATA    GETBIG  WORD SIZE OF ARRAY ELEMENT
+        MOV     *SP+,R0 INDEX VAL
+        JEQ     IXA1    SKIP IF 0
+        MPY     R3,R0   INDEX*WORDSIZE
+
+        SLA     R1,1    BYTE ADDR            11/21/90 -PC (using word addressed)
+        A       R1,*SP  ADD TO ADDR ON TOS
+IXA1    B       *BK
+
+*PUSH NIL ON STACK
+LDCN    DATA    2+$
+        DECT    SP
+        CLR     *SP
+        B       *BK
+
+*LOAD CONSTANT WORD LDCI
+LDCI    DATA    GET2    READ THE NEXT TWO BYTES
+        SWPB    R3     HIGH BYTE
+        SOC     R3,4
+        DECT    SP
+        MOV     R4,*SP PUSH THE VALUE
+        B       *BK    LOAD LOCAL WORD
+
+*WORDS BELOW DEAL WITH OFFSETS INTO CURRENT ACTIVATION RECORD
+*BASED ON PME CODE 'LD&STR' THESE VALUES ARE OFFSET BY THE LENGTH
+*OF AN ACTIVATION RECORD SO THAT WORD 0 IS FIRST AFTER ACTIVATION
+*RECORD
+
+*LOAD LOCAL WORD
+LDL     DATA    GETBIG
+        SLA     R3,1    BYTE ADDR
+        A       MP,R3
+        DECT    SP
+        MOV     @MSDLTA(R3),*SP
+        B       *BK
+
+*LOAD LOCAL ADDR
+LLA     DATA    GETBIG
+        SLA     R3,1
+        MOV     R3,R1
+        AI      R1,MSDLTA R1 POINTS PAST MSCW
+        JMP     LLA0
+
+SLLA    DATA    2+$
+        AI      R1,MSDLTA-190
+        ANDI    R1,>FFFE EVEN ADDRESS
+LLA0    A       MP,R1   ADDRESS IN R1
+        DECT    SP
+        MOV     R1,*SP
+        B       *BK
+
+*STORE LOCAL WORD
+STL     DATA    GETBIG
+        SLA     R3,1
+        MOV     R3,R1
+        JMP     STL0
+
+SSTL    DATA    2+$
+        AI      R1,-206
+STL0    A       MP,R1   LOC IN R1
+        MOV     *SP+,@MSDLTA(R1)
+        B       *BK
+
+*LOAD GLOBAL WORD
+LDO     DATA    GETBIG
+        SLA     R3,1
+        A       @BASE,R3
+        DECT    SP
+        MOV     @MSDLTA(R3),*SP
+        B       *BK
+
+*LOAD GLOBAL ADDRESS
+LAO     DATA    GETBIG
+        SLA     R3,1     BYTE OFFSET
+        A       @BASE,R3 ADDRESS OF WORD
+        DECT    SP
+        AI      R3,MSDLTA OFFSET PAST ACTIVATION RECORD
+        MOV     R3,*SP   PUSH IT
+        B       *BK
+
+*LOAD INTERMEDIATE ADDRESS
+LDA     DATA    GETBG1   R4=# LINKS TO TRAVERSE
+        BL      @SETLNK
+        SLA     R3,1     BYTE OFFSET
+        A       @STATLK,R3  ADDRESS OF ACTIVATION RECORD+
+*                           OFFSET IN R3
+        AI      R3,MSDLTA     OFFSET PAST RECORD
+        DECT    SP
+        MOV     R3,*SP   PUSH IT
+        B       *BK
+
+*LOAD INTERMEDIATE
+* NOTE: CODE AS WRITTEN EXPECTS 1-BASED OFFSET INTO VARIABLE
+*       SPACE BEHIND APPROPRIATE ACTIVATION RECORD; I.E. IF
+*       B=1 THEN THE FIRST WORD IS LOADED ETC.
+*       THIS MAY NEED TO BE CHANGED.
+
+LOD     DATA    GETBG1   R4=# LINKS TO TRAVERSE
+LOD1    BL      @SETLNK
+        SLA     R3,1     BYTE OFFSET
+        A       @STATLK,R3  ADDRESS OF ACTIVATION RECORD+
+*                           OFFSET IN R3
+        AI      R3,MSDLTA     OFFSET PAST RECORD
+        DECT    SP
+        MOV     *R3,*SP   PUSH IT
+        B       *BK
+
+*LOAD EXTENDED ADDRESS
+LAE     DATA    GETBG1
+        SLA     R3,1     BYTE OFFSET INTO DATA AREA
+        AI      R3,MSDLTA     PAST MSCW
+        SLA     R4,1     BYTE OFFSET INTO ENVEC
+        MOV     @EREC,R2
+        MOV     @ENVVEC(R2),R2  R2^ENVIRONMENT RECORD
+        A       R2,R4
+        MOV     *R4,R4   R4^EREC OF DESIRED SEGMENT
+        A       *R4,R3   R3^WORD DESIRED
+        DECT    SP
+        MOV     R3,*SP   PUSH THE ADDRESS
+        B       *BK
+
+*LOAD EXTENDED
+LDE     DATA    GETBG1
+        SLA     R3,1     BYTE OFFSET INTO DATA AREA
+        AI      R3,MSDLTA     PAST MSCW
+        SLA     R4,1     BYTE OFFSET INTO ENVEC
+        MOV     @EREC,R2
+        MOV     @ENVVEC(R2),R2  R2^ENVIRONMENT RECORD
+        A       R2,R4
+        MOV     *R4,R4   R4^EREC OF DESIRED SEGMENT
+        A       *R4,R3   R3^WORD DESIRED
+        DECT    SP
+        MOV     *R3,*SP   PUSH THE ADDRESS
+        B       *BK
+
+
+*STORE GLOBAL WORD
+SRO     DATA    GETBIG
+        SLA     R3,1
+        A       @BASE,R3
+        MOV     *SP+,@MSDLTA(R3)
+        B       *BK
+
+*STORE EXTENDED
+STE     DATA    GETBG1
+        SLA     R3,1     BYTE OFFSET INTO DATA AREA
+        AI      R3,MSDLTA     PAST MSCW
+        SLA     R4,1     BYTE OFFSET INTO ENVEC
+        MOV     @EREC,R2
+        MOV     @ENVVEC(R2),R2  R2^ENVIRONMENT RECORD
+        A       R2,R4
+        MOV     *R4,R4   R4=^EREC OF DESIRED SEGMENT
+        A       *R4,R3   R3=^WORD ADDRESS DESIRED
+        MOV     *SP+,*R3  POP & STORE THE WORD
+        B       *BK
+
+*STORE
+STO     DATA    2+$
+
+* * * * LINE BELOW IS A PATCH FOR DEBUG!
+*       BL      @CHKSTO
+
+        MOV     *SP+,R0   VALUE
+        MOV     *SP+,R1   DEST ADDR
+        MOV     R0,*R1
+        B       *BK
+
+*STORE INTERMEDIATE
+STR     DATA    GETBG1   R4=# LINKS TO TRAVERSE
+STR1    BL      @SETLNK
+        SLA     R3,1     BYTE OFFSET
+        A       @STATLK,R3  ADDRESS OF ACTIVATION RECORD+
+*                           OFFSET IN R3
+        AI      R3,MSDLTA     OFFSET PAST RECORD
+        MOV     *SP+,*R3   POP & STORE
+        B       *BK
+
+*SHORT LOAD INTERMEDIATE
+SLOD1   DATA    GETBIG
+        LI      R4,1    PARENT
+        B       @LOD1
+
+SLOD2   DATA    GETBIG
+        LI      R4,2    GRANDPARENT
+        B       @LOD1
+

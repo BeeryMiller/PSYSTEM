@@ -1,0 +1,36 @@
+*HEADER2 3/18/89.1
+
+    COPY "EQUDEBUG"
+
+*****************************
+       REF  NXTBYT,TSKSCH,CURPOL
+       REF  MOVEB
+       REF  OPTABL,CURTSK
+       REF  BACK,SEGHI,CPOFST
+       REF  READYQ,EVEC,EREC
+       REF  SIB
+       REF  BASE
+       REF  CURPRO
+       REF  LNGMOV,LNGADD
+       REF  CPOOL
+
+       IF   DEBUG
+       REF  RSBYTE
+       FI
+
+*****************************
+        DEF START,ROOTSK,TIMSTP,XEQERR
+        DEF UNITRD,UNITWT,UBUSY,UWAIT,UCLEAR,USTAT
+        DEF IORSLT
+        DEF SYSMAP,DSKADR,PHYSCT,BLCKNO,BYTCNT,UNITNO,DSKRD
+        DEF FTNWDS,FTEREC,FLTTIB,FLTNUM,FLTSEM
+        DEF MEMORY,CTWORD,CLCDVR
+****************************
+
+    COPY "EQUATES"
+    COPY "BIOS1"
+    COPY "BIOS2"
+    COPY "BOOT1"
+
+    END
+

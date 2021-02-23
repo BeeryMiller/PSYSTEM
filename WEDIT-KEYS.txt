@@ -1,0 +1,18 @@
+          KEY FOR USE WITH SECTOR EDITOR FOR WDS
+               
+               PAGE UP - NEXT SECTOR
+               ENTER - NEXT SECTOR
+               PAGE DN - PREVIOUS SECTOR
+               CTRL/R - READ A NEW SECTOR
+               CTRL/W - WRITE SECTOR
+               TAB - CHANGE FROM HEX TO ASCII EDIT OR BACK
+               ESC - EXIT FUNCTION
+               F8 - REPEAT FUNCTION
+               CTRL/P - SCREEN DUMP TO PIO PRINTER
+               ALT/= - QUIT
+               ARROWS - UP,DOWN,LEFT,RIGHT
+
+
+
+
+ÄêÄ–ãêïü©≥Ω«’’’’’’’’Äï

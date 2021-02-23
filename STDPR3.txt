@@ -1,0 +1,206 @@
+*STDPR3 6/04/89.3
+*FIX VOLUME ID PROBLEM IN READSEG
+
+*MODIFIED
+*       GTPOOL
+*       PTPOOL
+*       FLPBYT
+*       MOVSEG
+*       RELOC TEMPORARILY STUBBED
+
+*GETPOOLBYTES
+*PUTPOOLBYTES
+*MODIFIED 2/4/89
+
+POLBUF  BSS     2       GENERAL PURPOSE FOR POOL ORIENTED TASKS
+POLREM  BSS     2
+
+
+GTPOOL  MOV     *SP+,R1 BYTE COUNT
+        MOV     *SP+,R7 OFFSET WITHIN POOL (LOW WORD)
+        MOV     *SP+,R6 ADDRESS OF POOL DESCRIPTOR
+        JEQ     GTPL1   SEGMENT IS ON HEAP
+
+        A       @2(R6),R7   ADD OFFSET+WORD OF CODE POOL ADDRESS
+        MOV     *R6,R6  HIGH WORD OF CODE POOL ADDRESS
+GTPL1   CLR     R4      DEST IS IN STACK HEAP AREA
+        MOV     *SP+,R5 LOCAL ADDRESS OF DEST
+        BLWP    @LNGMOV
+        B       *BK
+
+
+PTPOOL  MOV     *SP+,R1 BYTE COUNT
+        MOV     *SP+,R5 OFFSET WITHIN POOL (LOW WORD)
+        MOV     *SP+,R4 ADDRESS OF POOL DESCRIPTOR
+        JEQ     PTPL1   SEGMENT IS ON HEAP
+
+        A       @2(R4),R5   ADD OFFSET+WORD OF CODE POOL ADDRESS
+        MOV     *R4,R4  HIGH WORD OF CODE POOL ADDRESS
+PTPL1   CLR     R6      SOURCE IS IN STACK HEAP AREA
+       MOV  *SP+,R7           local address of source
+        BLWP    @LNGMOV
+        B       *BK
+
+*******************************
+*LOCAL MOVE BLOCK OF BYTES
+*   (HANDLES OVERLAP CORRECTLY)
+*       R1=SRC (RET UPDATED)
+*       R2=DEST (RET UPDATED)
+*       R3=CNT
+*******************************
+
+MOVEB   MOV     R3,R3
+        JEQ     MVB1
+MVB2    MOVB    *R1+,*R2+
+        DEC     R3
+        JNE     MVB2
+MVB1    RT
+
+*SAME AS MOVEB BUT STARTS WITH HIBYTE
+REVMOV  MOV     R3,R3
+        JEQ     MVB1
+        A       R3,R1
+        DEC     R1      END OF BLOCK SRC
+        A       R3,R2
+        DEC     R2      END OF DEST
+REV1    MOVB    *R1,*R2
+        DEC     R1
+        DEC     R2
+        DEC     R3
+        JNE     REV1
+        RT
+
+
+
+*MODIFIED FOR LONG ADDRESSES 1/28/88
+FLPBYT  MOV     *SP+,@POLREM  WORD COUNT
+        MOV     *SP+,R6 OFFSET IN SEG
+        SLA     R6,1    BYTE VALUES
+        MOV     *SP+,R5 EREC
+        BL      @GETSEG
+
+        MOV     R7,R1   EXTRA COPY OF LO WORD
+        ANDI    R7,MASK8K   OFFSET WITHIN 8K BLOCK
+        AI      R7,OFST8K   WE WILL PUT IN 2ND BANK
+        SRL     R1,13   3 HI BITS=BLOCK OFFSET PTR (0 BASED)
+        SLA     R6,3
+        A       R6,R1   BYTE OFFSET INTO MEMORY MAP
+
+*MAPPING IN 2 BLOCKS GUARANTEES 8K TO 16K AVAILABLE TO
+*FLIP.  THIS SHOULD BE LONGER THAN ANY SEGMENT, YET ALLOWS
+*FLIPPING TO OCCUR WITHOUT CONCERN FOR 8K BLOCK BOUNDARIES.
+        AI      R1,SYSMAP
+        MOVB    *R1+,@BLK8K  SET MEMORY MAP
+        MOVB    *R1+,@BLK8K+1  ANOTHER 8K BLOCK
+FLP1    SWPB    *R7+
+        DEC     @POLREM
+        JNE     FLP1    MORE TO GO
+        LI      R1,SYSMAP
+        INCT    R1
+        MOVB    *R1+,@BLK8K   BACK TO STACK/HEAP AREA
+        MOVB    *R1,@BLK8K+1
+        B       *BK
+
+*GET LONG ADDRESS FROM SIB ADDRESS
+*DOES NOT CHECK FOR SEGMENT PRESENCE, SIMPLY RETURNS ADDRESS
+
+*ENTRY: R1=^SIB
+*EXIT:  R6/R7 FULL ADDRESS OF INDICATED SEGMENT
+*       R15 ALTERED
+
+        BSS     4
+SIBSEG  MOV     R11,@SIBSEG-2
+        MOV     R1,@SIBSEG-4  PROTECT SIB POINTER
+        MOV     *R1,R15  ^POOL DESCRIPTOR (MAYBE)
+        JEQ     SIBSG1  NOT IN CODE POOL
+        MOV     *R15+,R6  HI WORD
+        MOV     *R15,R7  LO WORD
+        MOV     @2(R1),R1  BYTE OFFSET WITHIN CODE POOL
+        BL      @LNGADD
+        JMP     SIBSG2
+
+SIBSG1  CLR     R6
+        MOV     @2(R1),R7  BYTE OFFSET IN STACK/HEAP AREA
+
+SIBSG2  MOV     @SIBSEG-2,R11  CLEAN UP & GO HOME
+        MOV     @SIBSEG-4,R1
+        RT
+
+
+SRCPOL  BSS     4       FULL ADDR
+
+MOVSEG  MOV     *SP+,R1 SRC OFFSET
+        MOV     *SP+,R0 ^SOURCE POOL DESC
+        MOV     *R0+,R6 HI WORD SOURCE POOL
+        MOV     *R0,R7  LO WORD
+        BL      @LNGADD
+        MOV     R6,@SRCPOL
+        MOV     R7,@SRCPOL+2
+
+        MOV     *SP+,R1 ^SIB
+        BL      @SIBSEG  R6/7=DEST ADDRESS
+
+       MOV  @SEGLEN(R1),R1    word count
+       SLA  R1,1              byte count
+       MOV  R6,R4             dest h
+       MOV  R7,R5             dest l
+       MOV  @SRCPOL,R6        src h
+       MOV  @SRCPOL+2,R7      src l
+*
+       BLWP @LNGMOV           move the data ...
+*
+       B    *BK
+*
+
+*STD PROCEDURE: RELOCSEG
+*USED ONLY FOR NATIVE CODE
+*TEMPORARILY POPS ARGUMENT AND RETURNS
+
+RELOC   INCT    SP
+        B       *BK
+
+
+*READSEG 2/02/89
+
+*NOTE!!!
+*FIX REFERENCES TO VOLUME NUMBER IN THIS CODE
+
+        BSS     2
+READSG  MOV     *SP+,R1 POP EREC PTR
+*       LEAVE EMPTY WORD ON STACK FOR LATER
+        MOV     @ENVSIB(R1),R1  ^SIB
+        BL      @SIBSEG  R6/7=SEGMENT FULL ADDRESS
+
+        LI      R0,DSKADR
+        MOV     R6,*R0+     SAVE HI WORD DESTINATION
+        MOV     R7,*R0       LO WORD DESTINATION
+        CLR     R0
+        BL      @CTWORD    ZERO OUT ALL FLAGS
+        MOV     @SEGLEN(R1),R3 LENGTH (WORDS)
+        SLA     R3,1    BYTE COUNT
+        MOV     R3,@BYTCNT  LENGTH OF SEGMENT INCLUDES
+*                       RELOCATION LISTS BUT NOT SEGREF LISTS
+        MOV     @SEGADD(R1),@BLCKNO  ASSUMES THAT SEGMENT ADDRESS
+*                   IS DISK RELATIVE--THIS IS BASED ON TI VERSION
+*                   THOUGH NOT CLEARLY STATED IN BOOK
+        MOV     @SEGUNT(R1),R0  GET VOLUME ID ADDRESS
+        MOV     *R0,R0          FIRST WORD OF VOL ID IS UNIT #
+        BL      @CLCDVR         MAKE SURE IT'S REAL DEVICE
+*                               BLOCKNO IS UPDATED
+        MOV     R0,@UNITNO      FIRST WORD OF VOL ID IS UNIT #
+
+*  *  *  *  *  *  *  *  *  *  *  *  *  *  *
+* MODIFIED FOR EVALUATION 2/2/89
+*     SET UNITNO TO CORRECT DEVICE.
+*     PG 2-32 REFERS TO VOLUME INFO
+*     RECORD BUT NO SPECIFICS ARE GIVEN.
+*  *  *  *  *  *  *  *  *  *  *  *  *  *  *
+
+        MOV     BK,@READSG-2     ALTER RETURN ADDRESS
+        LI      BK,READS1       SET TO RETURN HERE
+        BL      @DSKRD
+READS1  MOV     @IORSLT,*SP  LEAVE FLAG
+        MOV     @READSG-2,BK     PUT IT BACK
+        B       *BK
+
+

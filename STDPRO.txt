@@ -1,0 +1,227 @@
+*STDPRO 11/17/87.1
+
+CSPTBL  DATA    NIL     1 KERNEL
+        DATA    NIL     2 EXECERROR
+        DATA    NIL     3 SEGREAD
+        DATA    RELOC   4 RELOCATE SEGMENT
+        DATA    NIL     5 DUMMY
+        DATA    NIL     6 DUMMY
+        DATA    NIL     7 DUMMY
+        DATA    NIL     8 DUMMY
+        DATA    NIL     9 DUMMY
+        DATA    NIL     10 DUMMY
+        DATA    NIL     11 DUMMY
+        DATA    NIL     12 DUMMY
+        DATA    NIL     13 DUMMY
+        DATA    MOVSEG  14 MOVE A SEGMENT
+        DATA    MVL     15 MOVE LEFT
+        DATA    MVR     16 MOVE RIGHT
+        DATA    NIL     17 EXIT
+        DATA    UNITRD   18 UNITREAD
+        DATA    UNITWT  19 UNITWRITE
+        DATA    TIM     20 TIME
+        DATA    FLC     21 FILLCHAR
+        DATA    SCN     22 SCAN BYTE ARRAY
+        DATA    IOC     23 IOCHECK
+        DATA    GTPOOL  24 GETPOOLBYTES
+        DATA    PTPOOL  25 PUTPOOLBYTES
+        DATA    FLPBYT  26 FLIPSEGBYTES
+        DATA    QUIET   27 SUPPRESS EVENTS
+        DATA    ENABLE  28 ENABLE EVENTS
+        DATA    ATTACH  29 ATTACH
+        DATA    IOR     30 IORESULT
+        DATA    UBUSY   31 UNITBUSY
+        DATA    POT     32 POWER OF TEN
+        DATA    UWAIT   33 UNITWAIT
+        DATA    UCLEAR  34 UNITCLEAR
+        DATA    NIL     35 DUMMY
+        DATA    USTAT   36 USTATUS
+        DATA    IDS     37 IDSEARCH
+        DATA    TRS     38 TREESEARCH
+        DATA    READSG  39 READ A SEGMENT FROM DISK
+MAXCSP  EQU     39      MAX CSP VALUE
+
+*EXECUTE A STANDARD PROCEDURE IF VALID PROCEDURE #
+*ENTRY: R3=PROCEDURE #
+*EXIT: EXECUTE PROCEDURE IF VALID #
+*      ELSE RETURN TO CALLING PROCEDURE
+*      R2 ALTERED
+*
+CSPCHK  CI      R3,MAXCSP IN RANGE
+        JH      CSPC1
+*      BLWP @RSMON
+        SLA     R3,1
+        MOV     @CSPTBL-2(R3),R2  FETCH EXECUTION ADDR
+        JEQ     CSPC2    NIL VALUE?
+        B       *R2
+CSPC2   SRA     R3,1    NOT THIS TIME PUT IT BACK
+CSPC1   B       *R11
+
+*IO CHECK
+IOC     MOV     @IORSLT,R1
+        JNE     IOC1
+        B       *BK
+IOC1    B       @TRAPER
+        DATA    UIOERR  IO ERROR PROBLEM
+
+*MOVE LEFT
+MVL
+        MOV     *SP+,R3 # BYTES TO MOVE
+        JLT     NOMOVE  NO MOVE IF NEGATIVE
+        JEQ     NOMOVE  OR ZERO
+        MOV     *SP+,R1 DESTINATION BASE
+        A       *SP+,R1 DEST BYTE OFFSET
+        MOV     *SP+,R2 SOURCE BASE
+        A       *SP+,R2 SOURCE OFFSET
+
+*CHECK TO SEE IF EITHER SPANS WORD BOUNDARIES
+* (SEE IF WORD MOVE POSSIBLE)
+        MOV     R1,R4
+        SOC     R2,R4
+        SOC     R3,R4
+        SRL     R4,1    SEE IF ANY VALUES ODD
+        JOC     MVL1    BYTE TRANSFER NECESSARY
+
+* WORD MOVE
+MVL2    MOV     *R2+,*R1+
+        DECT    R3
+        JGT     MVL2
+        B       *BK
+
+* BYTE MOVE
+MVL1    MOVB    *R2+,*R1+
+        DEC     R3
+        JGT     MVL1
+        B       *BK
+
+NOMOVE  AI      SP,8    POP THE REST OF INFO FROM STACK
+        B       *BK
+
+*MOVE RIGHT
+MVR     MOV     *SP+,R3 # OF BYTES TO MOVE
+        JLT     NOMOVE  NO MOVE IF NEGATIVE OR
+        JEQ     NOMOVE  ZERO
+        MOV     *SP+,R1 DESTINATION BASE
+        A       *SP+,R1 DEST BYTE OFFSET
+        MOV     *SP+,R2 SOURCE BASE
+        A       *SP+,R2 SOURCE OFFSET
+        MOV     R3,R4
+        DEC     R4      POINTER VALUE OFF BY 1
+        A       R4,R1   POINT TO END OF DEST
+        A       R4,R2   POINT TO END OF SOURCE
+
+MVR1    MOVB    *R2,*R1 MOVE BYTES IN BACKWARDS
+        DEC     R2      SRC PTR
+        DEC     R1      DEST PTR
+        DEC     R3      DECR BYTE CTR
+        JGT     MVR1
+        B       *BK
+
+*FILL CHAR
+FLC
+        MOVB    @1(SP),R3 GET CHAR TO BE USED AS FILLER
+        SWPB    R3
+        MOVB    @1(SP),R3 GET INTO BOTH SIDES INCASE
+*                       WORD INSTRUCTION IS USED
+        INCT    SP
+        MOV     *SP+,R4 CHAR COUNT
+        JLT     FLC2    NO MOVE IF NEGATIVE
+        JEQ     FLC2    OR ZERO
+        MOV     *SP+,R1 DEST BASE
+        A       *SP+,R1 DEST OFFSET
+*SEE IF WORD INSTRUCTION POSSIBLE
+        MOV     R1,R0
+        SOC     R4,R0
+        SRL     R0,1    TEST TO SEE IF ANYTHING ODD
+        JOC     FLC1
+FLC3    MOV     R3,*R1+ MOVE BY WORDS
+        DECT    R4
+        JGT     FLC3
+        B       *BK
+
+FLC1    MOVB    R3,*R1+ MOVE BY BYTES
+        DEC     R4
+        JGT     FLC1
+        B       *BK
+
+FLC2    AI      SP,4    POP EXCESS ARGUMENTS
+        B       *BK
+
+SSTAT   BSS     6       MEMTOP; CLOCKHI; CLOCKLO
+
+*READ SYSTEM STATUS
+TIM
+       MOV  *SP+,R1
+       CLR  *R1
+       MOV  *SP+,R1
+       CLR  *R1
+
+       B    *BK               -pc 11/15/90
+
+*SCAN A BYTE ARRAY
+SCN     CLR     R0      CHARACTER COUNT
+        INCT    SP      POP JUNK WORD
+        MOV     *SP+,R1
+        A       *SP+,R1 BYTE PTR
+        MOV     *SP+,R2 CHARACTER TO SCAN FOR
+        SWPB    R2
+        MOV     *SP+,R3 SCAN FOR EQUAL OR NOT EQUAL?
+        MOV     *SP+,R4 MAX SCAN LENGTH
+        JEQ     DONESC  ZERO BYTES
+        JLT     SCN4    NEG VAL=REVERSE SCAN
+SCN1    CB      *R1+,R2
+        JEQ     SCN3
+        MOV     R3,R3   TYPE OF SCAN
+        JNE     DONESC  NOT EQUAL; STOP?
+SCN2    INC     R0      INCREMENT COUNTER
+        DEC     R4
+        JGT     SCN1
+        JMP     DONESC
+SCN3    MOV     R3,R3   BYTES EQ; STOP?
+        JEQ     DONESC  YES, DOING AN = SCAN
+        JMP     SCN2    ELSE CONTINUE
+
+SCN4    CLR     R0
+SCN7    CB      *R1,R2  COMPARE BYTE TO CHAR
+        JEQ     SCN6
+        MOV     R3,R3   BYTES NOT EQUAL; STOP?
+        JNE     DONESC  YES; <> SCAN
+SCN5    DEC     R0      BUMP COUNTER (NEGATIVE)
+        DEC     R1      DECR ADDR PTR
+        INC     R4      CHANGE MAX SCAN (UP TO 0)
+        JLT     SCN7
+        JMP     DONESC  SCANNED MAX ALLOWABLE
+SCN6    MOV     R3,R3   BYTE=; STOP?
+        JNE     SCN5
+
+DONESC  MOV     R0,*SP  PUSH CHAR COUNT
+        B       *BK
+
+*IO RESULT
+IOR     MOV     @IORSLT,*SP      PUSH IO RESULT
+        B       *BK
+
+
+*POWER_OF_TEN (32)
+POT    MOV  *SP+,R1           EXPONENT
+       JLT  POT1
+        CI      R1,>3F  CHECK FOR OVERFLOW
+        JGT     POT1    EXP TOO LARGE
+*
+       LI   R3,>4001
+       SRL  R1,1
+       JNC  POT10
+*
+       LI   R3,>400A
+*
+POT10  SWPB R1
+       A    R3,R1
+        MOV     SP,R2   POINTER
+        MOV     R1,*R2+
+        CLR     *R2+    ZERO ALL OTHER DIGITS
+        CLR     *R2+
+        CLR     *R2+
+        B       *BK
+
+POT1    BL      @TRAPER
+        DATA    FPIERR

@@ -1,0 +1,153 @@
+*PME2 1/15/89.1
+*LOAD MULTIPLE WORDS
+LDM     DATA    GETBYT
+        MOV     IPC,@IPCFLT  SAVE IN CASE OF STACK FAULT
+        DECT    @IPCFLT PT BEFORE THIS OPCODE
+        SLA     R3,1    BYTE COUNT
+        MOV     R3,@STKEXT NUMBER OF BYTES REQUIRED
+        MOV     @EREC,@SAVREC
+        BL      @STKCHK
+        MOV     *SP+,R2 BLOCK ADDRESS
+        A       @STKEXT,R2 PTR TO END OF BLOCK
+        DECT    R2      PT TO LAST WORD OF BLOCK
+        CI      R3,0    ANY WORDS TO MOVE
+        JEQ     LDM2
+LDM1    DECT    SP
+        MOV     *R2,*SP
+        DECT    R2      DECT WORD POINTER
+        DECT    R3      DECT BYTE COUNT
+        JGT     LDM1    NOT FINISHED YET
+LDM2    B       *BK
+
+*STORE MULTIPLE WORDS
+STM     DATA    GETBYT
+       MOV  R3,R3
+        JEQ     STM2    EXIT IF ZERO COUNT
+        MOV     R3,R1
+        SLA     R1,1    BYTE COUNT
+        A       SP,R1   DEST ADDR ON STACK
+        MOV     *R1,R1  R1 CONTAINS DEST ADDRESS
+STM1    MOV     *SP+,*R1+ MOVE WORD FROM STACK
+        DEC     R3      WORD COUNTER
+        JGT     STM1    MORE TO GO
+STM2    INCT    SP      POP ADDRESS WORD
+        B       *BK
+
+*LOAD STATIC LINK
+LSL     DATA    GETBYT
+        MOV     MP,R2   MSCW POINTER
+        MOV     R3,R3
+        JEQ     LSL2    ZERO LEVELS TO TRAVERSE
+LSL1    MOV     *R2,R2
+        DEC     R3      LEVEL COUNTER
+        JGT     LSL1    MORE TO GO
+LSL2    DECT    SP
+        MOV     R2,*SP
+        B       *BK
+
+*LOAD CONSTANT BYTE
+LDCB    DATA    GETBYT
+        DECT    SP
+        MOV     R3,*SP  PUSH THE VALUE
+        B       *BK
+
+*MOVE WORDS
+MMOV    DATA    GETBG1
+        MOV     R3,R3   # OF WORDS
+        JNE     MMOV1   NOT ZERO WORDS; EXIT
+        B       *BK
+MMOV1   MOV     R4,R4   CHECK IF CNTRL=0
+        JEQ     MMOVA   TYPE A MOVE (ADDR TO ADDR)
+        CI      R4,2    TYPE B MOVE (CHECK BYTE SEX)
+        JEQ     MMOVB
+        JMP     MMOVC   TYPE C (NO SEX CHECK)
+
+
+*MOVE ADDRESS TO ADDRESS (TYPE A)
+MMOVA   MOV     *SP+,R1 SOURCE ADDRESS
+        MOV     *SP+,R2 DEST ADDRESS
+        SLA     R3,1    BYTE COUNT
+        C       R1,R2
+        JL      MMOVA1
+        BL      @MOVEB
+        B       *BK
+
+MMOVA1  BL      @REVMOV
+        B       *BK
+
+*ASSUMING OFFSET IS WORD!!! CHECK OUT        bad assumption -pc 12/28/90
+*MOVE SEGMENT TO ADDRESS WITH SEX CHECK (TYPE B)
+MMOVB   MOV     *SP+,R1 OFFSET IN CURRENT SEGMENT (ASSUME BYTE)
+*       SLA     R1,1    BYTE
+*       A       CURSEG,R1 ADTUAL ADDR
+        MOV     *SP+,R4 ADDRESS OF DEST
+MMOVB1  BL      @SEGCHW GET A WORD
+        MOV     R2,*R4+ SAVE THE WORD
+        DEC     R3      WORD COUNTER
+        JNE     MMOVB1  MORE TO GO
+        B       *BK
+
+
+*MOVE SEGMENT TO ADDRESS W/O SEX CHECK (TYPE C)
+MMOVC   MOV     *SP+,R1 OFFSET IN CURRENT SEGMENT (ASSUME BYTE)
+*       SLA     R1,1    BYTE
+*       A       CURSEG,R1 ADTUAL ADDR
+        MOV     *SP+,R4 ADDRESS OF DEST
+MMOVC1  BL      @SEGWRD GET A WORD
+        MOV     R2,*R4+ SAVE THE WORD
+        DEC     R3      WORD COUNTER
+        JNE     MMOVC1  MORE TO GO
+        B       *BK
+
+*LOAD CONSTANT
+LDC     DATA    2+$
+        MOV     IPC,@IPCFLT
+        DEC     @IPCFLT POINT BEFORE THIS OPCODE
+        LI      R2,LDC1
+        B       @GETBG1 HOLD FETCH TILL AFTER IPCFLT SET
+*LINES BELOW FIX UP FOR ODD ARGUMENT SEQUENCE
+* FOR THIS INSTRUCTION {BYTE,BIG,BYTE}
+LDC1    MOV     R4,R5   R5 HAS MODE INFO
+        MOV     R3,R4   R4 HAS WORD OFFSET INTO CONSTANT POOL
+        LI      R2,LDC2
+        B       @GETBYT R3 HAS WORD COUNT
+LDC2    MOV     R3,R3   CHECK WORD COUNT
+        JNE     RLCNST
+        B       *BK     NOTHING TO MOVE
+
+RLCNST
+        MOV     R3,@STKEXT
+        MOV     R4,R1   R4 WILL BE ALTERED BY STKCHK
+        MOV     @EREC,@SVEREC
+        BL      @STKCHK
+        S       R3,SP   MEANWHILE, BACK AT THE RANCH...
+        S       R3,SP   ALLOW FOR WORDS
+        MOV     SP,R4   DEST ADDR
+        SLA     R1,1    GET BYTE OFFSET INTO CONSTANT POOL
+        A       @CPOFST,R1 R1 ^START OF CONSTANTS TO MOVE
+        CI      R5,2    MODE 2?
+        JNE     LDC3
+        B       @MMOVB1 MOVE WITH SEX CHECK
+LDC3    B       @MMOVC1 MOVE W/O SEX CHECK
+
+*LOAD CONSTANT OFFSET
+****ASSUMES CPOFST IS MAINTAINED BY SYSTEM
+LCO     DATA    GETBIG
+        SLA     R3,1    BYTE ADDR
+        A       @CPOFST,R3 ADD CONSTANT POOL OFFSET
+        DECT    SP
+        MOV     R3,*SP
+        B       *BK
+
+*SWAP TOP TWO ITEMS ON STACK
+SWAP    DATA    2+$
+        MOV     *SP,R1
+        MOV     @2(SP),*SP TOS-1 TO TOP
+        MOV     R1,@2(SP)
+        B       *BK
+
+DUP1    DATA    2+$
+        DECT    SP
+        MOV     @2(SP),*SP
+        B       *BK
+

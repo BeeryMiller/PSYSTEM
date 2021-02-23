@@ -1,0 +1,133 @@
+*HEADER1 3/18/89.1
+
+*NEEDED FOR DEBUGGING
+       AORG >0400
+*      REF  START
+       REF  RSTOP
+       B    @RSTOP
+PSTART B    @START
+
+*****************************
+
+TRUE
+CBH00
+ONE     DATA    1
+HSMRGN  EQU    >40      HEAP/STACK MARGIN
+*****************************
+*      DEF  NXTBYT,TSKSCH,CURPOL
+*      DEF  STRBF1,STRBF2,MOVEB
+*      DEF  LNGMOV,LNGADD
+*      DEF  OPTABL,CURTSK
+*      DEF  BACK,SEGHI,CPOFST
+*      DEF  READYQ,EVEC,EREC
+*      DEF  SIB
+*      DEF  BASE
+*      DEF  ENVVEC
+*      DEF  CURPRO
+*      DEF  CPOOL
+
+*****************************
+*       REF ROOTSK,TIMSTP,XEQERR
+*       REF UNITRD,UNITWT,UBUSY,UWAIT,UCLEAR,USTAT
+*       REF IORSLT,GBLVEC
+*       REF SYSMAP,DSKADR,PHYSCT,BLCKNO,BYTCNT,UNITNO,DSKRD
+*       REF FTNWDS,FTEREC,FLTTIB,FLTNUM,FLTSEM
+*       REF MEMORY
+*       REF CTWORD,CLCDVR
+
+****************************
+*                             PMKER3
+       UNL
+       COPY              "WDS1.PSYS.PMKER3"
+       LIST
+*                             PMKER2
+       UNL
+       COPY              "WDS1.PSYS.PMKER2"
+       LIST
+*                             EQUATES
+       UNL
+       COPY              "WDS1.PSYS.EQUATES"
+       LIST
+*                             PMKER1
+       UNL
+       COPY              "WDS1.PSYS.PMKER1"
+       LIST
+*                             STDPRO
+       UNL
+       COPY              "WDS1.PSYS.STDPRO"
+       LIST
+*                             STDPR2
+       UNL
+       COPY              "WDS1.PSYS.STDPR2"
+       LIST
+*                             STDPR3
+       UNL
+       COPY              "WDS1.PSYS.STDPR3"
+       LIST
+*                             STDPR4
+       UNL
+       COPY              "WDS1.PSYS.STDPR4"
+       LIST
+*                             PME1
+       UNL
+       COPY              "WDS1.PSYS.PME1"
+       LIST
+*                             PME2
+       UNL
+       COPY              "WDS1.PSYS.PME2"
+       LIST
+*                             PME2B
+       UNL
+       COPY              "WDS1.PSYS.PME2B"
+       LIST
+*                             PME2A
+       UNL
+       COPY              "WDS1.PSYS.PME2A"
+       LIST
+*                             PME3
+       UNL
+       COPY              "WDS1.PSYS.PME3"
+       LIST
+*                             PME4
+       UNL
+       COPY              "WDS1.PSYS.PME4"
+       LIST
+*                             PME5
+       UNL
+       COPY              "WDS1.PSYS.PME5"
+       LIST
+*                             PME6
+       COPY              "WDS1.PSYS.PME6"
+       LIST
+*HEADER2 3/18/89.1
+
+*****************************
+*      REF  NXTBYT,TSKSCH,CURPOL
+*      REF  STRBF1,MOVEB
+*      REF  OPTABL,CURTSK
+*      REF  BACK,SEGHI,CPOFST
+*      REF  READYQ,EVEC,EREC
+*      REF  SIB
+*      REF  BASE
+*      REF  CURPRO
+*      REF  LNGMOV,LNGADD
+*      REF  CPOOL
+
+*****************************
+*       DEF START,ROOTSK,TIMSTP,XEQERR
+*       DEF UNITRD,UNITWT,UBUSY,UWAIT,UCLEAR,USTAT
+*       DEF IORSLT,GBLVEC
+*       DEF SYSMAP,DSKADR,PHYSCT,BLCKNO,BYTCNT,UNITNO,DSKRD
+*       DEF FTNWDS,FTEREC,FLTTIB,FLTNUM,FLTSEM
+*       DEF MEMORY,CTWORD,CLCDVR
+****************************
+
+*                             BOIS
+*   UNL
+    COPY "WDS1.PSYS.BIOS"
+    LIST
+*                             BOOT1
+*   UNL
+    COPY "WDS1.PSYS.BOOT1"
+    LIST
+    END

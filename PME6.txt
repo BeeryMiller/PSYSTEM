@@ -1,0 +1,227 @@
+* PME6 REALS 7/15/87.1
+* VERIFY TRUNC AND ROUND
+EREG    EQU     0  REGISTER WITH ERROR CODE
+*                  MODIFY AS REQUIRED
+RPLUS   EQU     2
+RMINUS  EQU     1
+RTIMES  EQU     3
+RDIV    EQU     4
+DIV0   EQU  2                 SYSTEM DIV BY 0 ERROR VAL
+CFI     EQU     14 ASSUMES: INT VAL RETD IN R2
+*                  -2.5-->-2
+CIF     EQU     15
+FRND    EQU     0  REAL TO INT WITH ROUNDING
+
+FLOAT  DATA 10                -pc 1/19/90
+
+*DUPLICATE REAL TOP OF STACK
+DUPR    DATA    2+$
+        MOV     SP,R1   SOURCE
+        AI      SP,-8
+        MOV     SP,R2   DEST
+        MOV     *R1+,*R2+
+        MOV     *R1+,*R2+
+        MOV     *R1+,*R2+
+        MOV     *R1,*R2
+        B       *BK
+
+*ADD REALS (193)
+ADR     DATA    2+$
+        LI      R0,RPLUS
+        MOV     SP,R2   ARG1
+        AI      SP,8
+        MOV     SP,R3   ARG2
+        MOV     SP,R1   RESULT DEST
+        XOP     @FLOAT,0
+        MOV     EREG,EREG ERRORS?
+       JNE  FLTERR            YES
+        B       *BK
+
+
+SBR     DATA    2+$
+        LI      R0,RMINUS
+        MOV     SP,R2   ARG1
+        AI      SP,8
+        MOV     SP,R3   ARG2
+        MOV     SP,R1   RESULT DEST
+        XOP     @FLOAT,0
+        MOV     EREG,EREG   ERRORS?
+       JNE  FLTERR            YES
+        B       *BK
+
+MPR     DATA    2+$
+        LI      R0,RTIMES OPCODE
+        MOV     SP,R2   ARG1
+        AI      SP,8
+        MOV     SP,R3   ARG2
+        MOV     SP,R1   RESULT DEST
+       XOP  @FLOAT,0
+        MOV     EREG,EREG   ERRORS?
+       JNE  FLTERR      YES
+        B       *BK
+
+
+DVR     DATA    2+$
+        LI      R0,RDIV OPCODE
+        MOV     SP,R2   ARG1
+        AI      SP,8
+        MOV     SP,R3   ARG2
+        MOV     SP,R1   RESULT DEST
+        XOP     @FLOAT,0
+        MOV     EREG,EREG   ERRORS?
+       JNE  DVR1
+        B       *BK
+DVR1    CI      R0,DIV0
+        JNE     FLTERR
+        BL      @TRAPER
+        DATA    DIVZER
+
+FLTERR  BL      @TRAPER
+        DATA    FPIERR
+
+*INT TO FLOAT
+FLT     DATA    2+$
+        LI      R0,CIF
+        MOV     *SP,R2  INT ARG
+        AI      SP,-6   MAKE ROOM
+        MOV     SP,R1   DESTINATION
+        XOP     @FLOAT,0
+        MOV     EREG,EREG
+        JNE     FLTERR
+        B       *BK
+
+* FOR ABR & NGR, NEGATING THE FIRST WORD OF
+* THE RADIX 100 NUMBER IS EQUIVALENT TO
+* NEGATING THE ENTIRE VALUE
+ABR     DATA    2+$
+        ABS     *SP
+        B       *BK
+
+NGR     DATA    2+$
+        NEG     *SP      NEGATE MOST SIGNIFICANT WORD
+        B       *BK
+
+*TRUNC REAL (190)
+TRUNC   DATA    2+$
+       MOV  *SP,R1
+       MOV  SP,R2
+       MOV  SP,R3
+       AI   SP,6
+*
+       ABS  R1
+       SRL  R1,8
+       AI   R1,->0040
+       JLT  TRUNC8            ABS(R) < 1.00
+*
+       CI   R1,>0002
+       JH   FLTERR
+*
+       A    R1,R3             byte offset of decimal point in number
+       INCT R3
+*
+       CLR  R1
+       MOVB R1,*R3            clear decimal digits
+*
+        LI      R0,CFI
+        XOP     @FLOAT,0
+        MOV     EREG,EREG
+        JNE     FLTERR
+       JMP  TR1
+*
+TRUNC8 CLR  R1
+TR1    MOV  R1,*SP
+        B       *BK
+
+************************AWAITING VERIFICATION
+ROUND   DATA    2+$
+       LI   R0,CFI
+        MOV     SP,R2
+        AI      SP,6     ADJUST STACK
+       XOP  @FLOAT,0
+        MOV     EREG,EREG
+        JNE     FLTERR
+       MOV  R1,*SP
+        B       *BK
+**********************************
+
+*REAL COMPARISON SUBROUTINE
+*RETURNS WITH COMPARISON FLAGS SET
+CMPREL  MOV     SP,R4    ARG1
+        AI      SP,8
+        MOV     SP,R5    ARG2
+        AI      SP,6     READY FOR REPLY
+       C    *R5+,*R4     CHECK SIGN/EXPONENT
+        JNE     CMPR2    REL CAN BE FOUND FROM 1ST WD
+*                        BOTH ARGS SAME SIGN & EXP
+        MOV     *R4+,R6  TEST ARG1
+        JEQ     CMPR2    FPT 0.00
+        JGT     CMPR3    BOTH ARGS NEG
+        MOV     R5,R6    EXCHANGE POINTERS
+        MOV     R4,R5
+        MOV     R6,R4
+CMPR3   LI      R0,3     3 MORE WORDS
+CMPR1  C    *R5+,*R4+
+        JNE     CMPR2    FOUND A DIFFERENCE
+        DEC     R0
+        JNE     CMPR1    FALLS THRU IF EQUAL
+CMPR2   RT
+
+*EQUAL REALS (205)
+EQUREL  DATA    2+$
+        BL      @CMPREL
+        JEQ     RELTRU
+RELFLS  CLR     *SP
+        B       *BK
+RELTRU MOV  @ONE,*SP
+        B       *BK
+
+*LESS OR EQUAL REALS (206)
+LEQREL  DATA    2+$
+        BL      @CMPREL
+       JGT  RELFLS
+       JMP  RELTRU
+
+*GREATER OR EQUAL REALS (207)
+
+GEQREL  DATA    2+$
+        BL      @CMPREL
+       JLT  RELFLS
+       JMP  RELTRU
+
+
+*LOAD REAL (243)
+LDRL    DATA    2+$
+        MOV     *SP,R1   GET ADDRESS
+        AI      SP,-6    ALLOCATE STACK
+        MOV     SP,R2    WORKING POINTER (DEST)
+        LI      R0,4
+LR1     MOV     *R1+,*R2+
+        DEC     R0
+        JNE     LR1
+        B       *BK
+
+*STORE REAL(244)
+STRL    DATA    2+$
+       MOV  SP,R1             source
+        AI      SP,8
+        MOV     *SP+,R2  DEST & CLR STACK
+        LI      R0,4
+        JMP     LR1
+
+
+
+*LOAD CONSTANT REAL (242)
+* DOES NOT CHECK STACK
+LDCRL   DATA    GETBIG
+        MOV     R3,R1
+        SLA     R1,1     BYTE OFFSET
+       A    @CPOFST,R1 TRUE ADDRESS OF SOURCE
+        AI      SP,-8    ALLOCATE
+        MOV     SP,R4    DEST
+        LI      R3,8     8 BYTES
+
+LDCR1   BL      @SEGWRD GET A WORD
+        MOV     R2,*R4+ SAVE THE WORD
+       DECT R3                WORD COUNTER
+        JNE     LDCR1   MORE TO GO
+        B       *BK
